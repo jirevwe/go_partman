@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/jmoiron/sqlx"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -80,9 +81,10 @@ func (m *Manager) Initialize(ctx context.Context, config Config) error {
 }
 
 func (m *Manager) CreateFuturePartitions(ctx context.Context, tableConfig TableConfig, ahead uint) error {
+	var latestPartition string
+
 	// Get the latest partition's end time
 	pattern := fmt.Sprintf("%s_%%", tableConfig.Name)
-	var latestPartition string
 	err := m.db.QueryRowContext(ctx, getlatestPartition, pattern).Scan(&latestPartition)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to get latest partition: %w", err)
@@ -94,8 +96,12 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tableConfig TableC
 		// No existing partitions, start from now
 		startTime = m.clock.Now()
 	} else {
-		// Extract date from partition name (format: tablename_YYYYMMDD)
-		datePart := latestPartition[len(tableConfig.Name)+1:]
+		// Extract date from partition name (format: table_name_YYYYMMDD or table_name_tenant_id_YYYYMMDD)
+		datePart, err := extractDateFromString(latestPartition)
+		if err != nil {
+			return err
+		}
+
 		startTime, err = time.Parse(DateNoHyphens, datePart)
 		if err != nil {
 			return fmt.Errorf("failed to parse partition date: %w", err)
@@ -172,7 +178,11 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 
 		for _, partition := range partitions {
 			// Extract date from partition name
-			datePart := partition[len(table.TableName)+1:]
+			datePart, err := extractDateFromString(partition)
+			if err != nil {
+				return err
+			}
+
 			partitionDate, err := time.Parse(DateNoHyphens, datePart)
 			if err != nil {
 				m.logger.Error("failed to parse partition date",
@@ -279,7 +289,29 @@ func (m *Manager) generateRangePartitionSQL(name string, tc TableConfig, b Bound
 	return fmt.Sprintf(generatePartitionQuery, name, tc.Name, b.From.Format(time.DateOnly), b.To.Format(time.DateOnly))
 }
 
-// todo(raymond): add tenant id support
 func (m *Manager) generatePartitionName(tableConfig TableConfig, bounds Bounds) string {
-	return fmt.Sprintf("%s_%s", tableConfig.Name, strings.ReplaceAll(bounds.From.Format(time.DateOnly), "-", ""))
+	datePart := strings.ReplaceAll(bounds.From.Format(time.DateOnly), "-", "")
+	if len(tableConfig.TenantId) > 0 {
+		return fmt.Sprintf("%s_%s_%s", tableConfig.Name, tableConfig.TenantId, datePart)
+	}
+	return fmt.Sprintf("%s_%s", tableConfig.Name, datePart)
+}
+
+func extractDateFromString(input string) (string, error) {
+	// Regular expression to match exactly 8 digits at the end of the string
+	re, err := regexp.Compile(`(\d{8})$`)
+	if err != nil {
+		return "", err
+	}
+
+	// Find the match
+	matches := re.FindStringSubmatch(input)
+
+	// If a match is found, return it
+	if len(matches) > 1 {
+		return matches[1], nil
+	}
+
+	// Return empty string if no match
+	return "", nil
 }

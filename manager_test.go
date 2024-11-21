@@ -233,16 +233,27 @@ func TestManager(t *testing.T) {
 
 	t.Run("GeneratePartitionName", func(t *testing.T) {
 		manager := &Manager{}
-		tableConfig := TableConfig{
-			Name: "test_table",
-		}
 		bounds := Bounds{
 			From: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
 			To:   time.Date(2024, 3, 16, 0, 0, 0, 0, time.UTC),
 		}
 
-		name := manager.generatePartitionName(tableConfig, bounds)
-		assert.Equal(t, "test_table_20240315", name)
+		t.Run("without tenant ID", func(t *testing.T) {
+			tableConfig := TableConfig{
+				Name: "test_table",
+			}
+			name := manager.generatePartitionName(tableConfig, bounds)
+			assert.Equal(t, "test_table_20240315", name)
+		})
+
+		t.Run("with tenant ID", func(t *testing.T) {
+			tableConfig := TableConfig{
+				Name:     "test_table",
+				TenantId: "tenant1",
+			}
+			name := manager.generatePartitionName(tableConfig, bounds)
+			assert.Equal(t, "test_table_tenant1_20240315", name)
+		})
 	})
 
 	t.Run("GeneratePartitionSQL", func(t *testing.T) {

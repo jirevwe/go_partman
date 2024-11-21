@@ -70,18 +70,6 @@ func (m *Manager) Initialize(ctx context.Context, config Config) error {
 			return fmt.Errorf("failed to upsert table config for %s: %w", table.Name, err)
 		}
 
-		// Create initial partitions
-		now := m.clock.Now()
-		bounds := Bounds{
-			From: now,
-			To:   now.Add(time.Duration(table.PartitionInterval)),
-		}
-
-		// Create initial partition
-		if err := m.createPartition(ctx, table, bounds); err != nil {
-			return fmt.Errorf("failed to create initial partition for %s: %w", table.Name, err)
-		}
-
 		// Create future partitions based on PreCreateCount
 		if err := m.CreateFuturePartitions(ctx, table, table.PreCreateCount); err != nil {
 			return fmt.Errorf("failed to create future partitions for %s: %w", table.Name, err)

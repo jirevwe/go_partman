@@ -189,7 +189,7 @@ func TestManager(t *testing.T) {
 		var partitionCount int
 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "test_table_%")
 		assert.NoError(t, err)
-		assert.Equal(t, 2, partitionCount)
+		assert.Equal(t, 1, partitionCount)
 	})
 
 	t.Run("Maintain", func(t *testing.T) {

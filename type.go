@@ -57,7 +57,7 @@ type Partitioner interface {
 	Initialize(ctx context.Context, config Config) error
 
 	// CreateFuturePartitions Create new partitions ahead of time
-	CreateFuturePartitions(ctx context.Context, ahead uint) error
+	CreateFuturePartitions(ctx context.Context, tableConfig TableConfig, ahead uint) error
 
 	// DropOldPartitions Drop old partitions based on retention policy
 	DropOldPartitions(ctx context.Context) error

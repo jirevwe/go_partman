@@ -21,6 +21,10 @@ type Manager struct {
 }
 
 func NewManager(db *sqlx.DB, config Config, logger *slog.Logger, clock Clock) (*Manager, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
 	m := &Manager{
 		db:     db,
 		config: config,

@@ -47,3 +47,139 @@ func TestTimeDuration_Value(t *testing.T) {
 		})
 	}
 }
+
+func TestConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Config
+		wantErr string
+	}{
+		{
+			name:    "empty schema name",
+			config:  Config{},
+			wantErr: "schema name cannot be empty",
+		},
+		{
+			name: "no tables",
+			config: Config{
+				SchemaName: "test_schema",
+			},
+			wantErr: "at least one table configuration is required",
+		},
+		{
+			name: "empty table name",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{},
+				},
+			},
+			wantErr: "table[0]: name cannot be empty",
+		},
+		{
+			name: "range partition with no columns",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{
+						Name:            "test_table",
+						PartitionType:   TypeRange,
+						RetentionPeriod: OneDay,
+					},
+				},
+			},
+			wantErr: "table[0]: range partition requires exactly one partition column",
+		},
+		{
+			name: "range partition with multiple columns",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{
+						Name:            "test_table",
+						PartitionType:   TypeRange,
+						PartitionBy:     []string{"col1", "col2"},
+						RetentionPeriod: OneDay,
+					},
+				},
+			},
+			wantErr: "table[0]: range partition requires exactly one partition column",
+		},
+		{
+			name: "range partition with zero interval",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{
+						Name:            "test_table",
+						PartitionType:   TypeRange,
+						PartitionBy:     []string{"col1"},
+						RetentionPeriod: OneMonth,
+					},
+				},
+			},
+			wantErr: "table[0]: partition interval must be set for range partitions",
+		},
+		{
+			name: "valid range partition",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{
+						Name:              "test_table",
+						PartitionType:     TypeRange,
+						PartitionBy:       []string{"col1"},
+						PartitionInterval: OneDay,
+						RetentionPeriod:   OneMonth,
+					},
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "valid hash partition",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{
+						Name:            "test_table",
+						PartitionType:   TypeHash,
+						PartitionBy:     []string{"col1", "col2"},
+						RetentionPeriod: OneMonth,
+					},
+				},
+			},
+			wantErr: "",
+		},
+		{
+			name: "missing retention period",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{
+						Name:              "test_table",
+						PartitionType:     TypeRange,
+						PartitionBy:       []string{"col1"},
+						PartitionInterval: OneDay,
+					},
+				},
+			},
+			wantErr: "table[0]: retention period must be set",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				}
+			} else {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				}
+			}
+		})
+	}
+}

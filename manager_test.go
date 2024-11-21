@@ -21,6 +21,14 @@ CREATE TABLE if not exists test_table (
     PRIMARY KEY (id, created_at, tenant_id)
 ) PARTITION BY RANGE (created_at);`
 
+var createTestTableWithTenantIdQuery = `
+CREATE TABLE if not exists test_table (
+    id VARCHAR NOT NULL,
+    tenant_id VARCHAR NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, created_at, tenant_id)
+) PARTITION BY RANGE (tenant_id, created_at);`
+
 func createTestTable(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	_, err := db.ExecContext(ctx, createTestTableQuery)
 	require.NoError(t, err)
@@ -66,7 +74,12 @@ func TestManager(t *testing.T) {
 		logger := slog.Default()
 		config := Config{
 			SchemaName: "public",
-			Tables:     []TableConfig{},
+			Tables: []TableConfig{
+				{
+					Name:            "test_table",
+					RetentionPeriod: OneDay,
+				},
+			},
 		}
 
 		clock := NewSimulatedClock(time.Now())
@@ -124,6 +137,7 @@ func TestManager(t *testing.T) {
 		tableConfig := TableConfig{
 			Name:              "test_table",
 			TenantId:          "test_tenant",
+			PartitionBy:       []string{"created_at"},
 			PartitionType:     TypeRange,
 			PartitionInterval: OneDay,
 			RetentionPeriod:   OneWeek,
@@ -167,6 +181,7 @@ func TestManager(t *testing.T) {
 					Name:              "test_table",
 					TenantId:          "test_tenant",
 					PartitionType:     TypeRange,
+					PartitionBy:       []string{"created_at"},
 					PartitionInterval: OneDay,
 					RetentionPeriod:   TimeDuration(time.Hour),
 					PreCreateCount:    2,
@@ -207,6 +222,7 @@ func TestManager(t *testing.T) {
 					Name:              "test_table",
 					TenantId:          "test_tenant",
 					PartitionType:     TypeRange,
+					PartitionBy:       []string{"created_at"},
 					PartitionInterval: OneDay,
 					RetentionPeriod:   OneWeek,
 					PreCreateCount:    2,
@@ -278,8 +294,17 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		clock := NewSimulatedClock(time.Now())
+		config := Config{
+			SchemaName: "public",
+			Tables: []TableConfig{
+				{
+					Name:            "test_table",
+					RetentionPeriod: OneDay,
+				},
+			},
+		}
 
-		manager, err := NewManager(db, Config{}, logger, clock)
+		manager, err := NewManager(db, config, logger, clock)
 		require.NoError(t, err)
 
 		exists, err := manager.partitionExists(context.Background(), "nonexistent_partition")

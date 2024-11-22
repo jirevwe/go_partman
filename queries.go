@@ -51,8 +51,7 @@ SELECT EXISTS (
 var partitionsQuery = `
 SELECT tablename 
 FROM pg_tables
-WHERE tablename ILIKE $1
-ORDER BY tablename DESC;`
+WHERE tablename ILIKE $1;`
 
 var dropPartition = `DROP TABLE IF EXISTS %s;`
 

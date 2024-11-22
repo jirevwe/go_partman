@@ -7,8 +7,10 @@ import (
 	_ "github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
+	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/require"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 )
@@ -429,7 +431,7 @@ func TestManager(t *testing.T) {
 			},
 		}
 
-		clock := NewSimulatedClock(time.Now())
+		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		ctx := context.Background()
 
@@ -439,6 +441,14 @@ func TestManager(t *testing.T) {
 		err = manager.Initialize(ctx, config)
 		require.NoError(t, err)
 
+		partitionNames := []string{
+			"test_table_%s_20240101",
+			"test_table_%s_20240102",
+			"test_table_%s_20240103",
+			"test_table_%s_20240104",
+			"test_table_%s_20240105",
+		}
+
 		// Verify partitions were created for tenant 1
 		for _, tableConfig := range config.Tables {
 			var partitionCount uint
@@ -447,15 +457,149 @@ func TestManager(t *testing.T) {
 			require.Equal(t, tableConfig.PreCreateCount, partitionCount)
 
 			// Verify the partition naming format
-			var partitionName string
-			err = db.GetContext(ctx, &partitionName, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1 LIMIT 1", fmt.Sprintf("test_table_%s%%", tableConfig.TenantId))
+			rows, err := db.QueryxContext(ctx, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1", fmt.Sprintf("test_table_%s%%", tableConfig.TenantId))
 			require.NoError(t, err)
-			require.Contains(t, partitionName, tableConfig.TenantId, "Partition name should include tenant ID")
+
+			var partitions []string
+			for rows.Next() {
+				var name string
+				err = rows.Scan(&name)
+				require.NoError(t, err)
+				partitions = append(partitions, name)
+			}
+
+			for i, partition := range partitions {
+				require.Equal(t, fmt.Sprintf(partitionNames[i], tableConfig.TenantId), partition)
+				require.Contains(t, partition, tableConfig.TenantId, "Partition name should include tenant ID")
+			}
 
 			var exists bool
 			err = db.QueryRowxContext(ctx, "select exists(select 1 from partition_management where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
 			require.NoError(t, err)
 			require.True(t, exists)
+
+			err = rows.Close()
+			require.NoError(t, err)
+		}
+	})
+
+	t.Run("TestManagerWithRealClock", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx := context.Background()
+
+		// Create test table with tenant support
+		_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+		require.NoError(t, err)
+		defer dropTestTable(t, ctx, db)
+
+		// Setup manager config with two tenants
+		config := Config{
+			SchemaName: "public",
+			Tables: []TableConfig{
+				{
+					Name:              "test_table",
+					TenantId:          "tenant_1",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: OneDay,
+					RetentionPeriod:   TimeDuration(1 * time.Minute), // Short retention for testing
+					PreCreateCount:    2,
+				},
+				{
+					Name:              "test_table",
+					TenantId:          "tenant_2",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: OneDay,
+					RetentionPeriod:   TimeDuration(1 * time.Minute), // Short retention for testing
+					PreCreateCount:    2,
+				},
+			},
+		}
+
+		logger := slog.Default()
+		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		clock := NewSimulatedClock(now)
+
+		// Create and initialize manager
+		manager, err := NewManager(db, config, logger, clock)
+		require.NoError(t, err)
+
+		err = manager.Initialize(ctx, config)
+		require.NoError(t, err)
+
+		// Insert test data for both tenants
+		insertSQL := `INSERT INTO test_table (id, project_id, created_at) VALUES ($1, $2, $3)`
+
+		for i := 0; i < 10; i++ {
+			// Insert for tenant_1
+			_, err = db.ExecContext(ctx, insertSQL,
+				ulid.Make().String(), "tenant_1",
+				now.Add(time.Duration(i)*time.Hour),
+			)
+			require.NoError(t, err)
+
+			// Insert for tenant_2
+			_, err = db.ExecContext(ctx, insertSQL,
+				ulid.Make().String(), "tenant_2",
+				now.Add(time.Duration(i)*time.Hour),
+			)
+			require.NoError(t, err)
+		}
+
+		// Verify inserted rows
+		for _, tenantID := range []string{"tenant_1", "tenant_2"} {
+			var count int
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM test_table WHERE project_id = $1", tenantID)
+			require.NoError(t, err)
+			require.Equal(t, 10, count, "Expected 10 rows for tenant %s", tenantID)
+		}
+
+		// Start manager maintenance in background
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			ticker := time.NewTicker(time.Second)
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					clock.AdvanceTime(time.Hour * 12)
+
+					err = manager.Maintain(ctx)
+					if err != nil {
+						t.Errorf("Maintenance error: %v", err)
+						return
+					}
+
+					if clock.Now().After(now.Add(time.Hour * 24)) {
+						wg.Done()
+						ticker.Stop()
+					}
+				}
+			}
+		}()
+
+		// Wait for old data to be cleaned up
+		time.Sleep(2 * time.Second)
+
+		wg.Wait()
+
+		// Verify that old data has been cleaned up
+		for _, tenantID := range []string{"tenant_1", "tenant_2"} {
+			var count int
+			err = db.GetContext(ctx, &count,
+				"SELECT COUNT(*) FROM test_table WHERE project_id = $1",
+				tenantID,
+			)
+			require.NoError(t, err)
+			require.Equal(t, count, 0, "Expected 0 rows for tenant %s after cleanup", tenantID)
 		}
 	})
 }

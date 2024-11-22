@@ -109,11 +109,15 @@ func (m *Manager) Initialize(ctx context.Context, config Config) error {
 	return nil
 }
 
-func (m *Manager) CreateFuturePartitions(ctx context.Context, tableConfig TableConfig, ahead uint) error {
+func (m *Manager) CreateFuturePartitions(ctx context.Context, tc TableConfig, ahead uint) error {
 	var latestPartition string
 
 	// Get the latest partition's end time
-	pattern := fmt.Sprintf("%s_%%", tableConfig.Name)
+	pattern := fmt.Sprintf("%s_%%", tc.Name)
+	if len(tc.TenantId) > 0 {
+		pattern = fmt.Sprintf("%s_%s_%%", tc.Name, tc.TenantId)
+	}
+
 	err := m.db.QueryRowContext(ctx, getlatestPartition, pattern).Scan(&latestPartition)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to get latest partition: %w", err)
@@ -135,18 +139,18 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tableConfig TableC
 		if err != nil {
 			return fmt.Errorf("failed to parse partition date: %w", err)
 		}
-		startTime = startTime.Add(time.Duration(tableConfig.PartitionInterval))
+		startTime = startTime.Add(time.Duration(tc.PartitionInterval))
 	}
 
 	// Create future partitions
 	for i := uint(0); i < ahead; i++ {
 		bounds := Bounds{
-			From: startTime.Add(time.Duration(i) * time.Duration(tableConfig.PartitionInterval)),
-			To:   startTime.Add(time.Duration(i+1) * time.Duration(tableConfig.PartitionInterval)),
+			From: startTime.Add(time.Duration(i) * time.Duration(tc.PartitionInterval)),
+			To:   startTime.Add(time.Duration(i+1) * time.Duration(tc.PartitionInterval)),
 		}
 
 		// Check if partition already exists
-		partitionName := m.generatePartitionName(tableConfig, bounds)
+		partitionName := m.generatePartitionName(tc, bounds)
 		exists, err := m.partitionExists(ctx, partitionName)
 		if err != nil {
 			return fmt.Errorf("failed to check if partition exists: %w", err)
@@ -157,12 +161,12 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tableConfig TableC
 		}
 
 		// Create the partition
-		if err := m.createPartition(ctx, tableConfig, bounds); err != nil {
+		if err := m.createPartition(ctx, tc, bounds); err != nil {
 			return fmt.Errorf("failed to create future partition: %w", err)
 		}
 
 		m.logger.Info("created future partition",
-			"table", tableConfig.Name,
+			"table", tc.Name,
 			"partition", partitionName,
 			"from", bounds.From,
 			"to", bounds.To)
@@ -199,6 +203,9 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 		// Find partitions older than the retention period
 		cutoffTime := m.clock.Now().Add(-table.RetentionPeriod.Duration())
 		pattern := fmt.Sprintf("%s_%%", table.TableName)
+		if len(table.TenantId) > 0 {
+			pattern = fmt.Sprintf("%s_%s_%%", table.TableName, table.TenantId)
+		}
 
 		var partitions []string
 		if err := m.db.SelectContext(ctx, &partitions, partitionsQuery, pattern); err != nil {
@@ -222,13 +229,20 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 
 			// Check if partition is older than the retention period
 			if partitionDate.Before(cutoffTime) {
-				// run any pre-drop hooks (backup data, upload to object storage)
-				if err := m.hook(ctx, partition); err != nil {
-					m.logger.Error("failed to run pre-drop hooks",
-						"partition", partition,
-						"error", err)
-					continue
+				if m.hook != nil {
+					// run any pre-drop hooks (backup data, upload to object storage)
+					if err := m.hook(ctx, partition); err != nil {
+						m.logger.Error("failed to run pre-drop hooks",
+							"partition", partition,
+							"error", err)
+						continue
+					}
 				}
+
+				m.logger.Info("no hook func was specified",
+					"table", table.TableName,
+					"partition", partition,
+					"date", partitionDate)
 
 				// Drop the partition
 				if _, err := m.db.ExecContext(ctx, fmt.Sprintf(dropPartition, partition)); err != nil {
@@ -276,14 +290,14 @@ func (m *Manager) Maintain(ctx context.Context) error {
 	for i := 0; i < len(m.config.Tables); i++ {
 		table := m.config.Tables[i]
 
-		// Check for necessary future partitions
-		if err := m.CreateFuturePartitions(ctx, table, 1); err != nil {
-			return fmt.Errorf("failed to create future partitions: %w", err)
-		}
-
 		// Drop old partitions if needed
 		if err := m.DropOldPartitions(ctx); err != nil {
 			return fmt.Errorf("failed to drop old partitions: %w", err)
+		}
+
+		// Check for necessary future partitions
+		if err := m.CreateFuturePartitions(ctx, table, 1); err != nil {
+			return fmt.Errorf("failed to create future partitions: %w", err)
 		}
 	}
 

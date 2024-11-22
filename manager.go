@@ -19,7 +19,12 @@ type Manager struct {
 	logger *slog.Logger
 	config Config
 	clock  Clock
+	hook   Hook // todo(raymond): implement option params for hooks
 }
+
+// todo(raymond): implement a way for the manager to
+//  create partitions for new tables after it has started
+// 	since initialize is only called on start up
 
 func NewManager(db *sqlx.DB, config Config, logger *slog.Logger, clock Clock) (*Manager, error) {
 	if err := config.Validate(); err != nil {
@@ -218,7 +223,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 			// Check if partition is older than the retention period
 			if partitionDate.Before(cutoffTime) {
 				// run any pre-drop hooks (backup data, upload to object storage)
-				if err := m.runPreDropHooks(ctx, partition); err != nil {
+				if err := m.hook(ctx, partition); err != nil {
 					m.logger.Error("failed to run pre-drop hooks",
 						"partition", partition,
 						"error", err)
@@ -241,18 +246,6 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 		}
 	}
 
-	return nil
-}
-
-// runPreDropHooks executes any necessary operations before dropping a partition
-func (m *Manager) runPreDropHooks(ctx context.Context, partition string) error {
-	// Example hooks:
-	// 1. Export data to cold storage
-	// 2. Create backup
-	// 3. Send notifications
-	// 4. Update metrics
-
-	// todo(raymond): implement actual hooks as needed
 	return nil
 }
 

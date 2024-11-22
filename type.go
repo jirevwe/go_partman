@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// Hook a hook func executes any necessary operations before dropping a partition
+// Example hooks:
+// 1. Export data to cold storage
+// 2. Create backup
+// 3. Send notifications
+// 4. Update metrics
+type Hook func(ctx context.Context, partition string) error
+
 type TimeDuration time.Duration
 
 func (t *TimeDuration) Duration() time.Duration {

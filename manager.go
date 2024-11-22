@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jmoiron/sqlx"
+	"github.com/oklog/ulid/v2"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -44,6 +45,7 @@ func NewManager(db *sqlx.DB, config Config, logger *slog.Logger, clock Clock) (*
 func (m *Manager) runMigrations(ctx context.Context) error {
 	migrations := []string{
 		createManagementTable,
+		createUniqueIndex,
 	}
 
 	for _, migration := range migrations {
@@ -61,11 +63,20 @@ func (m *Manager) Initialize(ctx context.Context, config Config) error {
 		return fmt.Errorf("failed to create management table: %w", err)
 	}
 
+	for _, table := range config.Tables {
+		err := m.checkTableColumnsExist(ctx, table)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Insert or update configuration for each table
 	for _, table := range config.Tables {
-		_, err := m.db.ExecContext(ctx, upsertSQL,
+		res, err := m.db.ExecContext(ctx, upsertSQL,
+			ulid.Make().String(),
 			table.Name,
 			table.TenantId,
+			table.TenantIdColumn,
 			table.PartitionBy,
 			table.PartitionType,
 			table.PartitionInterval,
@@ -73,6 +84,15 @@ func (m *Manager) Initialize(ctx context.Context, config Config) error {
 		)
 		if err != nil {
 			return fmt.Errorf("failed to upsert table config for %s: %w", table.Name, err)
+		}
+
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected for %s: %w", table.Name, err)
+		}
+
+		if rowsAffected < int64(1) {
+			return fmt.Errorf("failed to upsert table config for %s", table.Name)
 		}
 
 		// Create future partitions based on PreCreateCount
@@ -290,15 +310,45 @@ func (m *Manager) generatePartitionSQL(name string, tc TableConfig, b Bounds) (s
 }
 
 func (m *Manager) generateRangePartitionSQL(name string, tc TableConfig, b Bounds) string {
+	if len(tc.TenantId) > 0 {
+		return fmt.Sprintf(generatePartitionWithTenantIdQuery, name, tc.Name,
+			tc.TenantId, b.From.Format(time.DateOnly),
+			tc.TenantId, b.To.Format(time.DateOnly))
+	}
 	return fmt.Sprintf(generatePartitionQuery, name, tc.Name, b.From.Format(time.DateOnly), b.To.Format(time.DateOnly))
 }
+func (m *Manager) checkTableColumnsExist(ctx context.Context, tc TableConfig) error {
+	if len(tc.TenantIdColumn) > 0 {
+		var exists bool
+		err := m.db.QueryRowxContext(ctx, checkColumnExists, m.config.SchemaName, tc.Name, tc.TenantIdColumn).Scan(&exists)
+		if err != nil {
+			return err
+		}
 
-func (m *Manager) generatePartitionName(tableConfig TableConfig, bounds Bounds) string {
-	datePart := strings.ReplaceAll(bounds.From.Format(time.DateOnly), "-", "")
-	if len(tableConfig.TenantId) > 0 {
-		return fmt.Sprintf("%s_%s_%s", tableConfig.Name, tableConfig.TenantId, datePart)
+		if !exists {
+			return fmt.Errorf("table %s does not have a tenant id column", tc.Name)
+		}
 	}
-	return fmt.Sprintf("%s_%s", tableConfig.Name, datePart)
+
+	var exists bool
+	err := m.db.QueryRowxContext(ctx, checkColumnExists, m.config.SchemaName, tc.Name, tc.PartitionBy).Scan(&exists)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		return fmt.Errorf("table %s does not have a timestamp column named %s", tc.Name, tc.PartitionBy)
+	}
+
+	return nil
+}
+
+func (m *Manager) generatePartitionName(tc TableConfig, bounds Bounds) string {
+	datePart := strings.ReplaceAll(bounds.From.Format(time.DateOnly), "-", "")
+	if len(tc.TenantId) > 0 {
+		return fmt.Sprintf("%s_%s_%s", tc.Name, tc.TenantId, datePart)
+	}
+	return fmt.Sprintf("%s_%s", tc.Name, datePart)
 }
 
 func extractDateFromString(input string) (string, error) {

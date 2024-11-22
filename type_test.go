@@ -88,22 +88,7 @@ func TestConfig_Validate(t *testing.T) {
 					},
 				},
 			},
-			wantErr: "table[0]: range partition requires exactly one partition column",
-		},
-		{
-			name: "range partition with multiple columns",
-			config: Config{
-				SchemaName: "test_schema",
-				Tables: []TableConfig{
-					{
-						Name:            "test_table",
-						PartitionType:   TypeRange,
-						PartitionBy:     []string{"col1", "col2"},
-						RetentionPeriod: OneDay,
-					},
-				},
-			},
-			wantErr: "table[0]: range partition requires exactly one partition column",
+			wantErr: "table[0]: partition_by is required for range partitions",
 		},
 		{
 			name: "range partition with zero interval",
@@ -113,7 +98,7 @@ func TestConfig_Validate(t *testing.T) {
 					{
 						Name:            "test_table",
 						PartitionType:   TypeRange,
-						PartitionBy:     []string{"col1"},
+						PartitionBy:     "col1",
 						RetentionPeriod: OneMonth,
 					},
 				},
@@ -128,24 +113,9 @@ func TestConfig_Validate(t *testing.T) {
 					{
 						Name:              "test_table",
 						PartitionType:     TypeRange,
-						PartitionBy:       []string{"col1"},
+						PartitionBy:       "col1",
 						PartitionInterval: OneDay,
 						RetentionPeriod:   OneMonth,
-					},
-				},
-			},
-			wantErr: "",
-		},
-		{
-			name: "valid hash partition",
-			config: Config{
-				SchemaName: "test_schema",
-				Tables: []TableConfig{
-					{
-						Name:            "test_table",
-						PartitionType:   TypeHash,
-						PartitionBy:     []string{"col1", "col2"},
-						RetentionPeriod: OneMonth,
 					},
 				},
 			},
@@ -159,12 +129,66 @@ func TestConfig_Validate(t *testing.T) {
 					{
 						Name:              "test_table",
 						PartitionType:     TypeRange,
-						PartitionBy:       []string{"col1"},
+						PartitionBy:       "col1",
 						PartitionInterval: OneDay,
 					},
 				},
 			},
 			wantErr: "table[0]: retention period must be set",
+		},
+		{
+			name: "tenant id without column",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{
+						Name:              "test_table",
+						PartitionType:     TypeRange,
+						PartitionBy:       "col1",
+						PartitionInterval: OneDay,
+						RetentionPeriod:   OneMonth,
+						TenantId:          "tenant1",
+						// Missing TenantIdColumn
+					},
+				},
+			},
+			wantErr: "table[0]: the tenant id column cannot be empty if the tenant id value is set",
+		},
+		{
+			name: "tenant column without id",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{
+						Name:              "test_table",
+						PartitionType:     TypeRange,
+						PartitionBy:       "col1",
+						PartitionInterval: OneDay,
+						RetentionPeriod:   OneMonth,
+						TenantIdColumn:    "tenant_id",
+						// Missing TenantId
+					},
+				},
+			},
+			wantErr: "table[0]: the tenant id value cannot be empty if the tenant id column is set",
+		},
+		{
+			name: "valid config with tenant id",
+			config: Config{
+				SchemaName: "test_schema",
+				Tables: []TableConfig{
+					{
+						Name:              "test_table",
+						PartitionType:     TypeRange,
+						PartitionBy:       "col1",
+						PartitionInterval: OneDay,
+						RetentionPeriod:   OneMonth,
+						TenantId:          "tenant1",
+						TenantIdColumn:    "tenant_id",
+					},
+				},
+			},
+			wantErr: "",
 		},
 	}
 

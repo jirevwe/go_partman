@@ -41,8 +41,6 @@ type PartitionerType string
 
 const (
 	TypeRange PartitionerType = "range"
-	TypeHash  PartitionerType = "hash"
-	TypeList  PartitionerType = "list"
 )
 
 const (
@@ -70,19 +68,26 @@ type Bounds struct {
 	From, To time.Time
 }
 
+type D struct {
+	Key   string
+	Value string
+}
+
 type TableConfig struct {
-	// Name of the table being partitioned
+	// Name Table being partitioned
 	Name string
 
-	// TenantId is the column used to logically divide data
+	// TenantId Tenant ID column value
 	TenantId string
 
-	// Partition type and settings
-	PartitionType PartitionerType // "range", "list", or "hash"
+	// TenantIdColumn Tenant ID column to partition by
+	TenantIdColumn string
 
-	// todo(raymond): add validation to ensure that included fields exist in the table
-	// PartitionBy Columns to partition by, they are applied in order
-	PartitionBy []string
+	// PartitionBy Timestamp column to partition by
+	PartitionBy string
+
+	// PartitionType Postgres partition type
+	PartitionType PartitionerType // "range", "list", or "hash"
 
 	// PartitionInterval For range partitions (e.g., "1 month", "1 day")
 	PartitionInterval TimeDuration
@@ -120,15 +125,28 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("table[%d]: retention period must be set", i)
 		}
 
+		if len(table.TenantId) > 0 {
+			if table.TenantIdColumn == "" {
+				return fmt.Errorf("table[%d]: the tenant id column cannot be empty if the tenant id value is set", i)
+			}
+		}
+
+		if len(table.TenantIdColumn) > 0 {
+			if table.TenantId == "" {
+				return fmt.Errorf("table[%d]: the tenant id value cannot be empty if the tenant id column is set", i)
+			}
+		}
+
 		// default value
 		if table.PreCreateCount == 0 {
 			table.PreCreateCount = 10
 		}
 
 		if table.PartitionType == TypeRange {
-			if len(table.PartitionBy) != 1 {
-				return fmt.Errorf("table[%d]: range partition requires exactly one partition column", i)
+			if len(table.PartitionBy) == 0 {
+				return fmt.Errorf("table[%d]: partition_by is required for range partitions", i)
 			}
+
 			if table.PartitionInterval == 0 {
 				return fmt.Errorf("table[%d]: partition interval must be set for range partitions", i)
 			}

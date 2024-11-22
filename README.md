@@ -9,8 +9,9 @@ A Go native implementation of PostgreSQL table partitioning management, inspired
 - Configurable retention policies
 - Automatic cleanup of old partitions
 - Pre-creation of future partitions
-- Multi-tenant support
+- Multi-tenant support with tenant-specific partitioning
 - Extensible pre-drop hooks for custom cleanup logic
+- Simulated clock support for testing
 
 ## Installation
 
@@ -26,6 +27,7 @@ go get github.com/jirevwe/go_partman
 import (
     "github.com/jirevwe/go_partman"
     "github.com/jmoiron/sqlx"
+    "log/slog"
 )
 
 // Configure your partitioning strategy
@@ -34,9 +36,8 @@ config := partition.Config{
     Tables: []partition.TableConfig{
         {
             Name:              "events",
-            TenantId:          "",                  // Optional: for multi-tenant setups
             PartitionType:     partition.TypeRange,
-            PartitionBy:       []string{"created_at"},
+            PartitionBy:       "created_at",
             PartitionInterval: partition.OneDay,    // Daily partitions
             PreCreateCount:    7,                   // Create 7 days ahead
             RetentionPeriod:   partition.OneMonth,  // Keep 1 month of data
@@ -45,7 +46,7 @@ config := partition.Config{
 }
 
 // Create the manager
-db := sqlx.MustConnect("postgres", "postgres://localhost/mydb?sslmode=disable")
+db := sqlx.MustConnect("postgres", "postgres://localhost:5432/postgres?sslmode=disable")
 logger := slog.Default()
 manager, err := partition.NewManager(db, config, logger, partition.NewRealClock())
 if err != nil {
@@ -69,37 +70,76 @@ go func() {
 }()
 ```
 
+### Multi-tenant Setup
+
+```go
+config := partition.Config{
+    SchemaName: "public",
+    Tables: []partition.TableConfig{
+        {
+            Name:              "events",
+            TenantId:          "tenant1",           // Specify tenant ID
+            TenantIdColumn:    "project_id",        // Column name for tenant ID
+            PartitionType:     partition.TypeRange,
+            PartitionBy:       "created_at",
+            PartitionInterval: partition.OneDay,
+            PreCreateCount:    7,
+            RetentionPeriod:   partition.OneMonth,
+        },
+    },
+}
+```
+
 ### Table Requirements
 
-Your table must be created as a partitioned table before using go_partman. Example:
+Your table must be created as a partitioned table before using go_partman. Examples:
 
 ```sql
+-- Single-tenant table
 CREATE TABLE events (
-    id SERIAL,
-    tenant_id TEXT,
-    created_at TIMESTAMP NOT NULL,
-    data JSONB
+    id VARCHAR NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    data JSONB,
+    PRIMARY KEY (id, created_at)
 ) PARTITION BY RANGE (created_at);
+
+-- Multi-tenant table
+CREATE TABLE events (
+    id VARCHAR NOT NULL,
+    project_id VARCHAR NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    data JSONB,
+    PRIMARY KEY (id, created_at, project_id)
+) PARTITION BY RANGE (project_id, created_at);
 ```
 
 ## Features in Detail
 
 ### Partition Types
 
-- **Range Partitioning**: Currently supports time-based range partitioning
+Currently supports:
+- **Range Partitioning**: Time-based range partitioning with optional tenant ID support
 - **List Partitioning**: Planned for future release
 - **Hash Partitioning**: Planned for future release
 
+### Time Intervals
+
+Built-in time intervals:
+- `OneDay`: 24 hours
+- `OneWeek`: 7 days
+- `OneMonth`: 30 days
+
 ### Maintenance Operations
 
-- Automatically creates new partitions ahead of time
-- Drops old partitions based on retention policy
-- Supports custom pre-drop hooks for data archival or backup
+- Automatically creates new partitions ahead of time based on `PreCreateCount`
+- Drops old partitions based on `RetentionPeriod`
+- Supports custom pre-drop hooks for data archival or backup operations
 
 ### Multi-tenant Support
 
-- Optional `tenant-id` based partitioning
+- Optional tenant-based partitioning using `TenantId` and `TenantIdColumn`
 - Separate partition management per tenant
+- Automatic partition naming with tenant ID inclusion
 
 ## Contributing
 

@@ -84,6 +84,28 @@ config := partman.Config{
 }
 ```
 
+### Adding a Managed Table
+
+You can add a new managed table to the partition manager using the `AddManagedTable` method:
+
+```go
+newTableConfig := partman.TableConfig{
+    Name:              "new_events",
+    TenantId:          "tenant1",           // Specify tenant ID
+    TenantIdColumn:    "project_id",        // Column name for tenant ID
+    PartitionType:     partman.TypeRange,
+    PartitionBy:       "created_at",
+    PartitionInterval: partman.OneDay,
+    PreCreateCount:    7,
+    RetentionPeriod:   partman.OneMonth,
+}
+
+// Add the new managed table
+if err := manager.AddManagedTable(newTableConfig); err != nil {
+    log.Fatal(err)
+}
+```
+
 ### Table Requirements
 
 Your table must be created as a partitioned table before using go_partman. Examples:

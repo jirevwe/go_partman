@@ -586,4 +586,104 @@ func TestManager(t *testing.T) {
 			require.Equal(t, 0, count)
 		}
 	})
+
+	t.Run("AddManagedTable", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Create test table with tenant support
+		_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+		require.NoError(t, err)
+		defer dropTestTable(t, ctx, db)
+
+		// Initial configuration with two tenants
+		config := Config{
+			SchemaName: "public",
+			SampleRate: time.Second,
+			Tables: []TableConfig{
+				{
+					Name:              "test_table",
+					TenantId:          "tenant_1",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: OneDay,
+					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PreCreateCount:    2,
+				},
+				{
+					Name:              "test_table",
+					TenantId:          "tenant_2",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: OneDay,
+					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PreCreateCount:    2,
+				},
+			},
+		}
+
+		logger := slog.Default()
+		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		clock := NewSimulatedClock(now)
+
+		// Create and initialize manager
+		manager, err := NewManager(db, config, logger, clock)
+		require.NoError(t, err)
+
+		// Add a new managed table
+		newTableConfig := TableConfig{
+			Name:              "test_table",
+			TenantId:          "tenant_3",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: OneDay,
+			RetentionPeriod:   TimeDuration(1 * time.Minute),
+			PreCreateCount:    2,
+		}
+		err = manager.AddManagedTable(newTableConfig)
+		require.NoError(t, err)
+
+		// Verify that the new tenant's partitions exist
+		var partitionCount int
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "test_table_tenant_3%")
+		require.NoError(t, err)
+		require.Equal(t, 2, partitionCount)
+
+		// Insert rows for the new tenant
+		insertSQL := `INSERT INTO test_table (id, project_id, created_at) VALUES ($1, $2, $3)`
+		for i := 0; i < 5; i++ {
+			_, err = db.ExecContext(context.Background(), insertSQL,
+				ulid.Make().String(), "tenant_3",
+				now.Add(time.Duration(i)*time.Minute),
+			)
+			require.NoError(t, err)
+		}
+
+		clock.AdvanceTime(time.Hour)
+
+		var count int
+		err = db.QueryRowxContext(ctx, "select count(*) from test_table where project_id = $1;", newTableConfig.TenantId).Scan(&count)
+		require.NoError(t, err)
+		require.Equal(t, count, 5)
+
+		// Run retention for the tenant
+		err = manager.DropOldPartitions(context.Background())
+		require.NoError(t, err)
+
+		// Verify that the new tenant's partitions exist
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "test_table_tenant_3%")
+		require.NoError(t, err)
+		require.Equal(t, 1, partitionCount)
+
+		var exists bool
+		err = db.QueryRowxContext(ctx, "select exists(select 1 from test_table where project_id = $1);", newTableConfig.TenantId).Scan(&exists)
+		require.NoError(t, err)
+		require.False(t, exists)
+	})
 }

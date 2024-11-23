@@ -25,10 +25,6 @@ type Manager struct {
 	stop   chan struct{}   // For graceful shutdown
 }
 
-// todo(raymond): implement a way for the manager to
-//  create partitions for new tables after it has started
-// 	since initialize is only called on start up
-
 func NewManager(db *sqlx.DB, config Config, logger *slog.Logger, clock Clock) (*Manager, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -419,4 +415,44 @@ func (m *Manager) Start(ctx context.Context) error {
 func (m *Manager) Stop() {
 	close(m.stop)
 	m.wg.Wait()
+}
+
+// AddManagedTable adds a new managed table to the partition manager
+func (m *Manager) AddManagedTable(tc TableConfig) error {
+	// Validate the new table configuration
+	if err := tc.Validate(); err != nil {
+		return err
+	}
+
+	// Insert the new table configuration into the management table
+	ctx := context.Background()
+	res, err := m.db.ExecContext(ctx, upsertSQL,
+		ulid.Make().String(),
+		tc.Name,
+		tc.TenantId,
+		tc.TenantIdColumn,
+		tc.PartitionBy,
+		tc.PartitionType,
+		tc.PartitionInterval,
+		tc.RetentionPeriod,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert new table config for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
+	}
+
+	if rowsAffected < int64(1) {
+		return fmt.Errorf("failed to upsert new table config for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
+	}
+
+	// Create future partitions for the new table
+	if err = m.CreateFuturePartitions(ctx, tc, tc.PreCreateCount); err != nil {
+		return fmt.Errorf("failed to create future partitions for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
+	}
+
+	return nil
 }

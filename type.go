@@ -3,6 +3,7 @@ package partman
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -127,39 +128,48 @@ func (c *Config) Validate() error {
 	}
 
 	for i, table := range c.Tables {
-		if table.Name == "" {
-			return fmt.Errorf("table[%d]: name cannot be empty", i)
+		if err := table.Validate(); err != nil {
+			return fmt.Errorf("table[%d]: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// Validate checks if the table configuration is valid
+func (tc *TableConfig) Validate() error {
+	if tc.Name == "" {
+		return errors.New("name cannot be empty")
+	}
+
+	if tc.RetentionPeriod == 0 {
+		return errors.New("retention period must be set")
+	}
+
+	if len(tc.TenantId) > 0 {
+		if tc.TenantIdColumn == "" {
+			return errors.New("the tenant id column cannot be empty if the tenant id value is set")
+		}
+	}
+
+	if len(tc.TenantIdColumn) > 0 {
+		if tc.TenantId == "" {
+			return errors.New("the tenant id value cannot be empty if the tenant id column is set")
+		}
+	}
+
+	// set default value
+	if tc.PreCreateCount == 0 {
+		tc.PreCreateCount = 10
+	}
+
+	if tc.PartitionType == TypeRange {
+		if len(tc.PartitionBy) == 0 {
+			return errors.New("partition_by is required for range partitions")
 		}
 
-		if table.RetentionPeriod == 0 {
-			return fmt.Errorf("table[%d]: retention period must be set", i)
-		}
-
-		if len(table.TenantId) > 0 {
-			if table.TenantIdColumn == "" {
-				return fmt.Errorf("table[%d]: the tenant id column cannot be empty if the tenant id value is set", i)
-			}
-		}
-
-		if len(table.TenantIdColumn) > 0 {
-			if table.TenantId == "" {
-				return fmt.Errorf("table[%d]: the tenant id value cannot be empty if the tenant id column is set", i)
-			}
-		}
-
-		// default value
-		if table.PreCreateCount == 0 {
-			table.PreCreateCount = 10
-		}
-
-		if table.PartitionType == TypeRange {
-			if len(table.PartitionBy) == 0 {
-				return fmt.Errorf("table[%d]: partition_by is required for range partitions", i)
-			}
-
-			if table.PartitionInterval == 0 {
-				return fmt.Errorf("table[%d]: partition interval must be set for range partitions", i)
-			}
+		if tc.PartitionInterval == 0 {
+			return errors.New("partition interval must be set for range partitions")
 		}
 	}
 

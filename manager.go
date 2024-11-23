@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,7 +20,9 @@ type Manager struct {
 	logger *slog.Logger
 	config Config
 	clock  Clock
-	hook   Hook // todo(raymond): implement option params for hooks
+	hook   Hook            // todo(raymond): implement option params for hooks
+	wg     *sync.WaitGroup // For testing synchronization
+	stop   chan struct{}   // For graceful shutdown
 }
 
 // todo(raymond): implement a way for the manager to
@@ -36,10 +39,11 @@ func NewManager(db *sqlx.DB, config Config, logger *slog.Logger, clock Clock) (*
 		config: config,
 		logger: logger,
 		clock:  clock,
+		wg:     &sync.WaitGroup{},
+		stop:   make(chan struct{}),
 	}
 
-	err := m.runMigrations(context.Background())
-	if err != nil {
+	if err := m.runMigrations(context.Background()); err != nil {
 		return nil, err
 	}
 
@@ -101,9 +105,14 @@ func (m *Manager) Initialize(ctx context.Context, config Config) error {
 		}
 
 		// Create future partitions based on PreCreateCount
-		if err := m.CreateFuturePartitions(ctx, table, table.PreCreateCount); err != nil {
+		if err = m.CreateFuturePartitions(ctx, table, table.PreCreateCount); err != nil {
 			return fmt.Errorf("failed to create future partitions for %s: %w", table.Name, err)
 		}
+	}
+
+	// Start the maintenance routine
+	if err := m.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start maintenance routine: %w", err)
 	}
 
 	return nil
@@ -283,8 +292,8 @@ func (m *Manager) createPartition(ctx context.Context, tableConfig TableConfig, 
 	return nil
 }
 
-// Maintain defines a regularly run maintenance routine
-func (m *Manager) Maintain(ctx context.Context) error {
+// maintain defines a regularly run maintenance routine
+func (m *Manager) maintain(ctx context.Context) error {
 	// loop all tables and run maintenance
 
 	for i := 0; i < len(m.config.Tables); i++ {
@@ -324,6 +333,7 @@ func (m *Manager) generateRangePartitionSQL(name string, tc TableConfig, b Bound
 	}
 	return fmt.Sprintf(generatePartitionQuery, name, tc.Name, b.From.Format(time.DateOnly), b.To.Format(time.DateOnly))
 }
+
 func (m *Manager) checkTableColumnsExist(ctx context.Context, tc TableConfig) error {
 	if len(tc.TenantIdColumn) > 0 {
 		var exists bool
@@ -375,4 +385,34 @@ func extractDateFromString(input string) (string, error) {
 
 	// Return empty string if no match
 	return "", nil
+}
+
+// Start begins the maintenance routine
+func (m *Manager) Start(ctx context.Context) error {
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		ticker := time.NewTicker(m.config.SampleRate)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-m.stop:
+				return
+			case <-ticker.C:
+				if err := m.maintain(ctx); err != nil {
+					m.logger.Error("maintenance error", "error", err)
+				}
+			}
+		}
+	}()
+	return nil
+}
+
+// Stop gracefully stops the maintenance routine; used for testing
+func (m *Manager) Stop() {
+	close(m.stop)
+	m.wg.Wait()
 }

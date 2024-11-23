@@ -10,7 +10,6 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/require"
 	"log/slog"
-	"sync"
 	"testing"
 	"time"
 )
@@ -76,6 +75,7 @@ func TestManager(t *testing.T) {
 		logger := slog.Default()
 		config := Config{
 			SchemaName: "public",
+			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
 					Name:            "test_table",
@@ -102,6 +102,7 @@ func TestManager(t *testing.T) {
 		logger := slog.Default()
 		config := Config{
 			SchemaName: "public",
+			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
 					Name:              "test_table",
@@ -147,6 +148,7 @@ func TestManager(t *testing.T) {
 		logger := slog.Default()
 		config := Config{
 			SchemaName: "public",
+			SampleRate: time.Second,
 			Tables: []TableConfig{
 				tableConfig,
 			},
@@ -176,6 +178,7 @@ func TestManager(t *testing.T) {
 		logger := slog.Default()
 		config := Config{
 			SchemaName: "public",
+			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
 					Name:              "test_table",
@@ -206,7 +209,7 @@ func TestManager(t *testing.T) {
 		require.Equal(t, 1, partitionCount)
 	})
 
-	t.Run("Maintain", func(t *testing.T) {
+	t.Run("TestMaintainer", func(t *testing.T) {
 		db, pool := setupTestDB(t)
 		defer cleanupTestDB(t, db, pool)
 
@@ -216,6 +219,7 @@ func TestManager(t *testing.T) {
 		logger := slog.Default()
 		config := Config{
 			SchemaName: "public",
+			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
 					Name:              "test_table",
@@ -233,12 +237,22 @@ func TestManager(t *testing.T) {
 		manager, err := NewManager(db, config, logger, clock)
 		require.NoError(t, err)
 
-		err = manager.Initialize(context.Background(), config)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		err = manager.Initialize(ctx, config)
 		require.NoError(t, err)
 
-		err = manager.Maintain(context.Background())
-		require.NoError(t, err)
+		// Advance clock to trigger maintenance
+		clock.AdvanceTime(time.Hour * 24)
 
+		// Wait for maintenance to complete
+		time.Sleep(2 * time.Second)
+
+		// Stop the manager
+		manager.Stop()
+
+		// Verify partitions were created
 		var partitionCount int
 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "test_table_%")
 		require.NoError(t, err)
@@ -313,6 +327,7 @@ func TestManager(t *testing.T) {
 		clock := NewSimulatedClock(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC))
 		config := Config{
 			SchemaName: "public",
+			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
 					Name:              "test_table",
@@ -359,6 +374,7 @@ func TestManager(t *testing.T) {
 		logger := slog.Default()
 		config := Config{
 			SchemaName: "public",
+			SampleRate: time.Second,
 			Tables: []TableConfig{
 				tableConfig,
 			},
@@ -425,6 +441,7 @@ func TestManager(t *testing.T) {
 		logger := slog.Default()
 		config := Config{
 			SchemaName: "public",
+			SampleRate: time.Second,
 			Tables: []TableConfig{
 				tenantOneConfig,
 				tenantTwoConfig,
@@ -487,7 +504,8 @@ func TestManager(t *testing.T) {
 		db, pool := setupTestDB(t)
 		defer cleanupTestDB(t, db, pool)
 
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
 		// Create test table with tenant support
 		_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
@@ -497,6 +515,7 @@ func TestManager(t *testing.T) {
 		// Setup manager config with two tenants
 		config := Config{
 			SchemaName: "public",
+			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
 					Name:              "test_table",
@@ -505,7 +524,7 @@ func TestManager(t *testing.T) {
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
 					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(1 * time.Minute), // Short retention for testing
+					RetentionPeriod:   TimeDuration(1 * time.Minute),
 					PreCreateCount:    2,
 				},
 				{
@@ -515,7 +534,7 @@ func TestManager(t *testing.T) {
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
 					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(1 * time.Minute), // Short retention for testing
+					RetentionPeriod:   TimeDuration(1 * time.Minute),
 					PreCreateCount:    2,
 				},
 			},
@@ -551,45 +570,22 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		// Verify inserted rows
+		// Verify initial data
 		for _, tenantID := range []string{"tenant_1", "tenant_2"} {
 			var count int
 			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM test_table WHERE project_id = $1", tenantID)
 			require.NoError(t, err)
-			require.Equal(t, 10, count, "Expected 10 rows for tenant %s", tenantID)
+			require.Equal(t, 10, count)
 		}
 
-		// Start manager maintenance in background
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			ticker := time.NewTicker(time.Second)
+		// Advance clock to trigger maintenance
+		clock.AdvanceTime(time.Hour * 24)
 
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					clock.AdvanceTime(time.Hour * 12)
+		// Wait for maintenance to complete
+		time.Sleep(time.Second)
 
-					err = manager.Maintain(ctx)
-					if err != nil {
-						t.Errorf("Maintenance error: %v", err)
-						return
-					}
-
-					if clock.Now().After(now.Add(time.Hour * 24)) {
-						wg.Done()
-						ticker.Stop()
-					}
-				}
-			}
-		}()
-
-		// Wait for old data to be cleaned up
-		time.Sleep(2 * time.Second)
-
-		wg.Wait()
+		// Stop the manager
+		manager.Stop()
 
 		// Verify that old data has been cleaned up
 		for _, tenantID := range []string{"tenant_1", "tenant_2"} {
@@ -599,7 +595,7 @@ func TestManager(t *testing.T) {
 				tenantID,
 			)
 			require.NoError(t, err)
-			require.Equal(t, count, 0, "Expected 0 rows for tenant %s after cleanup", tenantID)
+			require.Equal(t, 0, count)
 		}
 	})
 }

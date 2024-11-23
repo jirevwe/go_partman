@@ -67,9 +67,6 @@ type Partitioner interface {
 
 	// DropOldPartitions Drop old partitions based on retention policy
 	DropOldPartitions(ctx context.Context) error
-
-	// Maintain Manage partition maintenance
-	Maintain(ctx context.Context) error
 }
 
 type Bounds struct {
@@ -82,16 +79,16 @@ type D struct {
 }
 
 type TableConfig struct {
-	// Name Table being partitioned
+	// Name of the partitioned table
 	Name string
 
-	// TenantId Tenant ID column value
+	// TenantId Tenant ID column value (e.g., 01J2V010NV1259CYWQEYQC8F35)
 	TenantId string
 
-	// TenantIdColumn Tenant ID column to partition by
+	// TenantIdColumn Tenant ID column to partition by (e.g., tenant_id)
 	TenantIdColumn string
 
-	// PartitionBy Timestamp column to partition by
+	// PartitionBy Timestamp column to partition by (e.g., created_at)
 	PartitionBy string
 
 	// PartitionType Postgres partition type
@@ -111,6 +108,10 @@ type Config struct {
 	// SchemaName is the schema of the tables
 	SchemaName string
 
+	// SampleRate is how often the internal ticker runs
+	SampleRate time.Duration
+
+	// Tables holds all the partitioned tables being managed
 	Tables []TableConfig
 }
 
@@ -118,6 +119,10 @@ type Config struct {
 func (c *Config) Validate() error {
 	if c.SchemaName == "" {
 		return fmt.Errorf("schema name cannot be empty")
+	}
+
+	if c.SampleRate == 0 {
+		return fmt.Errorf("sample-rate cannot be zero")
 	}
 
 	if len(c.Tables) == 0 {

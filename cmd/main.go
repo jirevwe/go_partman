@@ -31,6 +31,7 @@ func main() {
 				RetentionPeriod:   partition.OneMonth * 2,
 			},
 		},
+		SampleRate: time.Second,
 		SchemaName: "public",
 	}
 
@@ -40,17 +41,11 @@ func main() {
 	}
 
 	// Initialize partition structure
-	if err := manager.Initialize(context.Background(), config); err != nil {
+	if err = manager.Initialize(context.Background(), config); err != nil {
 		log.Fatal(err)
 	}
 
-	// Set up maintenance routine
-	go func() {
-		ticker := time.NewTicker(24 * time.Hour)
-		for range ticker.C {
-			if err := manager.Maintain(context.Background()); err != nil {
-				log.Printf("maintenance error: %v", err)
-			}
-		}
-	}()
+	if err = manager.Start(context.Background()); err != nil {
+		log.Fatal(err)
+	}
 }

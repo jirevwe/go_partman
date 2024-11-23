@@ -53,21 +53,15 @@ if err != nil {
     log.Fatal(err)
 }
 
-// Initialize partitioning
-err = manager.Initialize(context.Background(), config)
-if err != nil {
+// Initialize the partition manager
+if err = manager.Initialize(context.Background(), config); err != nil {
     log.Fatal(err)
 }
 
-// Run maintenance (typically in a background goroutine)
-go func() {
-    ticker := time.NewTicker(1 * time.Hour)
-    for range ticker.C {
-        if err := manager.Maintain(context.Background()); err != nil {
-            log.Printf("maintenance error: %v", err)
-        }
-    }
-}()
+// Run maintenance (runs a background goroutine)
+if err = manager.Start(context.Background()); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Multi-tenant Setup

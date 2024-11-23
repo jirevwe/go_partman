@@ -72,14 +72,21 @@ func TestManager(t *testing.T) {
 		db, pool := setupTestDB(t)
 		defer cleanupTestDB(t, db, pool)
 
+		createTestTable(t, context.Background(), db)
+		defer dropTestTable(t, context.Background(), db)
+
 		logger := slog.Default()
 		config := Config{
 			SchemaName: "public",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
-					Name:            "test_table",
-					RetentionPeriod: OneDay,
+					Name:              "test_table",
+					PartitionType:     TypeRange,
+					PartitionBy:       "created_at",
+					PartitionInterval: OneDay,
+					RetentionPeriod:   TimeDuration(time.Hour),
+					PreCreateCount:    2,
 				},
 			},
 		}
@@ -87,7 +94,6 @@ func TestManager(t *testing.T) {
 		clock := NewSimulatedClock(time.Now())
 
 		manager, err := NewManager(db, config, logger, clock)
-		require.NoError(t, err)
 		require.NoError(t, err)
 		require.NotNil(t, manager)
 	})
@@ -120,7 +126,7 @@ func TestManager(t *testing.T) {
 		manager, err := NewManager(db, config, logger, clock)
 		require.NoError(t, err)
 
-		err = manager.Initialize(context.Background(), config)
+		err = manager.Start(context.Background())
 		require.NoError(t, err)
 
 		var count int
@@ -156,10 +162,7 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Now())
 
-		manager, err := NewManager(db, config, logger, clock)
-		require.NoError(t, err)
-
-		err = manager.CreateFuturePartitions(context.Background(), tableConfig, tableConfig.PreCreateCount)
+		_, err := NewManager(db, config, logger, clock)
 		require.NoError(t, err)
 
 		var partitionCount uint
@@ -193,9 +196,6 @@ func TestManager(t *testing.T) {
 		clock := NewSimulatedClock(time.Now())
 
 		manager, err := NewManager(db, config, logger, clock)
-		require.NoError(t, err)
-
-		err = manager.Initialize(context.Background(), config)
 		require.NoError(t, err)
 
 		clock.AdvanceTime(time.Hour + time.Minute)
@@ -240,7 +240,7 @@ func TestManager(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		err = manager.Initialize(ctx, config)
+		err = manager.initialize(ctx, config)
 		require.NoError(t, err)
 
 		// Advance clock to trigger maintenance
@@ -343,9 +343,6 @@ func TestManager(t *testing.T) {
 		manager, err := NewManager(db, config, logger, clock)
 		require.NoError(t, err)
 
-		err = manager.Initialize(context.Background(), config)
-		require.NoError(t, err)
-
 		exists, err := manager.partitionExists(context.Background(), "test_table_20240315")
 		require.NoError(t, err)
 		require.True(t, exists)
@@ -384,10 +381,7 @@ func TestManager(t *testing.T) {
 
 		ctx := context.Background()
 
-		manager, err := NewManager(db, config, logger, clock)
-		require.NoError(t, err)
-
-		err = manager.Initialize(ctx, config)
+		_, err = NewManager(db, config, logger, clock)
 		require.NoError(t, err)
 
 		// Verify partitions were created
@@ -452,10 +446,7 @@ func TestManager(t *testing.T) {
 
 		ctx := context.Background()
 
-		manager, err := NewManager(db, config, logger, clock)
-		require.NoError(t, err)
-
-		err = manager.Initialize(ctx, config)
+		_, err = NewManager(db, config, logger, clock)
 		require.NoError(t, err)
 
 		partitionNames := []string{
@@ -546,9 +537,6 @@ func TestManager(t *testing.T) {
 
 		// Create and initialize manager
 		manager, err := NewManager(db, config, logger, clock)
-		require.NoError(t, err)
-
-		err = manager.Initialize(ctx, config)
 		require.NoError(t, err)
 
 		// Insert test data for both tenants

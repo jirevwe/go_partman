@@ -47,6 +47,10 @@ func NewManager(db *sqlx.DB, config Config, logger *slog.Logger, clock Clock) (*
 		return nil, err
 	}
 
+	if err := m.initialize(context.Background(), config); err != nil {
+		return nil, err
+	}
+
 	return m, nil
 }
 
@@ -66,7 +70,7 @@ func (m *Manager) runMigrations(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) Initialize(ctx context.Context, config Config) error {
+func (m *Manager) initialize(ctx context.Context, config Config) error {
 	// Create management table to track partitioned tables
 	if _, err := m.db.ExecContext(ctx, createManagementTable); err != nil {
 		return fmt.Errorf("failed to create management table: %w", err)

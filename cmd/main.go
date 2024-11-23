@@ -40,11 +40,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Initialize partition structure
-	if err = manager.Initialize(context.Background(), config); err != nil {
-		log.Fatal(err)
-	}
-
 	if err = manager.Start(context.Background()); err != nil {
 		log.Fatal(err)
 	}

@@ -59,9 +59,6 @@ const (
 )
 
 type Partitioner interface {
-	// Initialize Create initial partition structure
-	Initialize(ctx context.Context, config Config) error
-
 	// CreateFuturePartitions Create new partitions ahead of time
 	CreateFuturePartitions(ctx context.Context, tableConfig TableConfig, ahead uint) error
 

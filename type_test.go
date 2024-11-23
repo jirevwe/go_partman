@@ -1,4 +1,4 @@
-package partition
+package partman
 
 import (
 	"database/sql/driver"

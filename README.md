@@ -31,16 +31,16 @@ import (
 )
 
 // Configure your partitioning strategy
-config := partition.Config{
+config := partman.Config{
     SchemaName: "public",
-    Tables: []partition.TableConfig{
+    Tables: []partman.TableConfig{
         {
             Name:              "events",
-            PartitionType:     partition.TypeRange,
+            PartitionType:     partman.TypeRange,
             PartitionBy:       "created_at",
-            PartitionInterval: partition.OneDay,    // Daily partitions
+            PartitionInterval: partman.OneDay,    // Daily partitions
             PreCreateCount:    7,                   // Create 7 days ahead
-            RetentionPeriod:   partition.OneMonth,  // Keep 1 month of data
+            RetentionPeriod:   partman.OneMonth,  // Keep 1 month of data
         },
     },
 }
@@ -48,7 +48,7 @@ config := partition.Config{
 // Create the manager
 db := sqlx.MustConnect("postgres", "postgres://localhost:5432/postgres?sslmode=disable")
 logger := slog.Default()
-manager, err := partition.NewManager(db, config, logger, partition.NewRealClock())
+manager, err := partman.NewManager(db, config, logger, partman.NewRealClock())
 if err != nil {
     log.Fatal(err)
 }
@@ -58,7 +58,7 @@ if err = manager.Initialize(context.Background(), config); err != nil {
     log.Fatal(err)
 }
 
-// Run maintenance (runs a background goroutine)
+// Start the partition manager (runs a background goroutine)
 if err = manager.Start(context.Background()); err != nil {
     log.Fatal(err)
 }
@@ -67,18 +67,18 @@ if err = manager.Start(context.Background()); err != nil {
 ### Multi-tenant Setup
 
 ```go
-config := partition.Config{
+config := partman.Config{
     SchemaName: "public",
-    Tables: []partition.TableConfig{
+    Tables: []partman.TableConfig{
         {
             Name:              "events",
             TenantId:          "tenant1",           // Specify tenant ID
             TenantIdColumn:    "project_id",        // Column name for tenant ID
-            PartitionType:     partition.TypeRange,
+            PartitionType:     partman.TypeRange,
             PartitionBy:       "created_at",
-            PartitionInterval: partition.OneDay,
+            PartitionInterval: partman.OneDay,
             PreCreateCount:    7,
-            RetentionPeriod:   partition.OneMonth,
+            RetentionPeriod:   partman.OneMonth,
         },
     },
 }

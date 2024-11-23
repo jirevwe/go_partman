@@ -1,4 +1,4 @@
-package partition
+package partman
 
 var createManagementTable = `
 CREATE TABLE IF NOT EXISTS partition_management (

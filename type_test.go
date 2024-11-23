@@ -63,6 +63,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "no tables",
 			config: Config{
 				SchemaName: "test_schema",
+				SampleRate: time.Second,
 			},
 			wantErr: "at least one table configuration is required",
 		},
@@ -70,6 +71,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "empty table name",
 			config: Config{
 				SchemaName: "test_schema",
+				SampleRate: time.Second,
 				Tables: []TableConfig{
 					{},
 				},
@@ -80,6 +82,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "range partition with no columns",
 			config: Config{
 				SchemaName: "test_schema",
+				SampleRate: time.Second,
 				Tables: []TableConfig{
 					{
 						Name:            "test_table",
@@ -94,6 +97,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "range partition with zero interval",
 			config: Config{
 				SchemaName: "test_schema",
+				SampleRate: time.Second,
 				Tables: []TableConfig{
 					{
 						Name:            "test_table",
@@ -109,6 +113,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "valid range partition",
 			config: Config{
 				SchemaName: "test_schema",
+				SampleRate: time.Second,
 				Tables: []TableConfig{
 					{
 						Name:              "test_table",
@@ -125,6 +130,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "missing retention period",
 			config: Config{
 				SchemaName: "test_schema",
+				SampleRate: time.Second,
 				Tables: []TableConfig{
 					{
 						Name:              "test_table",
@@ -140,6 +146,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "tenant id without column",
 			config: Config{
 				SchemaName: "test_schema",
+				SampleRate: time.Second,
 				Tables: []TableConfig{
 					{
 						Name:              "test_table",
@@ -158,6 +165,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "tenant column without id",
 			config: Config{
 				SchemaName: "test_schema",
+				SampleRate: time.Second,
 				Tables: []TableConfig{
 					{
 						Name:              "test_table",
@@ -176,6 +184,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "valid config with tenant id",
 			config: Config{
 				SchemaName: "test_schema",
+				SampleRate: time.Second,
 				Tables: []TableConfig{
 					{
 						Name:              "test_table",

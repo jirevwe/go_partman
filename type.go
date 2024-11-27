@@ -5,7 +5,17 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"github.com/jmoiron/sqlx"
+	"log/slog"
 	"time"
+)
+
+var (
+	ErrHookMustNotBeNil     = errors.New("[partition manager] hook must not be nil")
+	ErrClockMustNotBeNil    = errors.New("[partition manager] clock must not be nil")
+	ErrLoggerMustNotBeNil   = errors.New("[partition manager] logger must not be nil")
+	ErrConfigMustNotBeNil   = errors.New("[partition manager] config must not be nil")
+	ErrDbDriverMustNotBeNil = errors.New("[partition manager] db driver must not be nil")
 )
 
 // Hook a hook func executes any necessary operations before dropping a partition
@@ -15,6 +25,72 @@ import (
 // 3. Send notifications
 // 4. Update metrics
 type Hook func(ctx context.Context, partition string) error
+
+type Option func(m *Manager) error
+
+// WithDB function to set the database
+func WithDB(db *sqlx.DB) Option {
+	return func(m *Manager) error {
+		if db == nil {
+			return ErrDbDriverMustNotBeNil
+		}
+
+		m.db = db
+		return nil
+	}
+}
+
+// WithLogger function to set the logger
+func WithLogger(logger *slog.Logger) Option {
+	return func(m *Manager) error {
+		if logger == nil {
+			return ErrLoggerMustNotBeNil
+		}
+
+		m.logger = logger
+		return nil
+	}
+}
+
+// WithConfig function to set the config
+func WithConfig(config *Config) Option {
+	return func(m *Manager) error {
+		if config == nil {
+			return ErrConfigMustNotBeNil
+		}
+
+		if err := m.config.Validate(); err != nil {
+			return err
+		}
+
+		m.config = config
+		return nil
+	}
+}
+
+// WithClock function to set the clock
+func WithClock(clock Clock) Option {
+	return func(m *Manager) error {
+		if clock == nil {
+			return ErrClockMustNotBeNil
+		}
+
+		m.clock = clock
+		return nil
+	}
+}
+
+// WithHook function to set the hook
+func WithHook(hook Hook) Option {
+	return func(m *Manager) error {
+		if hook == nil {
+			return ErrHookMustNotBeNil
+		}
+
+		m.hook = hook
+		return nil
+	}
+}
 
 type TimeDuration time.Duration
 

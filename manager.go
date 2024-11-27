@@ -14,18 +14,58 @@ import (
 	"time"
 )
 
-// Manager Core partition manager
+// Manager Partition manager
 type Manager struct {
 	db     *sqlx.DB
 	logger *slog.Logger
-	config Config
+	config *Config
 	clock  Clock
-	hook   Hook            // todo(raymond): implement option params for hooks
+	hook   Hook
 	wg     *sync.WaitGroup // For testing synchronization
 	stop   chan struct{}   // For graceful shutdown
 }
 
-func NewManager(db *sqlx.DB, config Config, logger *slog.Logger, clock Clock) (*Manager, error) {
+func NewManager(options ...Option) (*Manager, error) {
+	m := &Manager{
+		wg:   &sync.WaitGroup{},
+		stop: make(chan struct{}),
+	}
+
+	for _, opt := range options {
+		err := opt(m)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if m.db == nil {
+		return nil, ErrDbDriverMustNotBeNil
+	}
+
+	if m.logger == nil {
+		return nil, ErrLoggerMustNotBeNil
+	}
+
+	if m.config == nil {
+		return nil, ErrConfigMustNotBeNil
+	}
+
+	if m.clock == nil {
+		return nil, ErrClockMustNotBeNil
+	}
+
+	if err := m.runMigrations(context.Background()); err != nil {
+		return nil, err
+	}
+
+	if err := m.initialize(context.Background(), m.config); err != nil {
+		return nil, err
+	}
+
+	return m, nil
+}
+
+func NewAndStart(db *sqlx.DB, config *Config, logger *slog.Logger, clock Clock) (*Manager, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -39,12 +79,19 @@ func NewManager(db *sqlx.DB, config Config, logger *slog.Logger, clock Clock) (*
 		stop:   make(chan struct{}),
 	}
 
-	if err := m.runMigrations(context.Background()); err != nil {
+	ctx := context.Background()
+
+	if err := m.runMigrations(ctx); err != nil {
 		return nil, err
 	}
 
-	if err := m.initialize(context.Background(), config); err != nil {
+	if err := m.initialize(ctx, config); err != nil {
 		return nil, err
+	}
+
+	// Start the maintenance routine
+	if err := m.Start(ctx); err != nil {
+		return nil, fmt.Errorf("failed to start maintenance routine: %w", err)
 	}
 
 	return m, nil

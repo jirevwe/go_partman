@@ -15,7 +15,7 @@ import (
 )
 
 var createTestTableQuery = `
-CREATE TABLE if not exists test_table (
+CREATE TABLE if not exists test.test_table (
     id VARCHAR NOT NULL,
     tenant_id VARCHAR NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -23,7 +23,7 @@ CREATE TABLE if not exists test_table (
 ) PARTITION BY RANGE (created_at);`
 
 var createTestTableWithTenantIdQuery = `
-CREATE TABLE if not exists test_table (
+CREATE TABLE if not exists test.test_table (
     id VARCHAR NOT NULL,
     project_id VARCHAR NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -36,7 +36,7 @@ func createTestTable(t *testing.T, ctx context.Context, db *sqlx.DB) {
 }
 
 func dropTestTable(t *testing.T, ctx context.Context, db *sqlx.DB) {
-	_, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS test_table")
+	_, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS test.test_table")
 	require.NoError(t, err)
 }
 
@@ -63,12 +63,12 @@ func cleanupTestDB(t *testing.T, db *sqlx.DB, pool *pgxpool.Pool) {
 	}(db)
 	defer pool.Close()
 
-	_, err := db.Exec("DROP TABLE IF EXISTS partition_management")
+	_, err := db.Exec("DROP TABLE IF EXISTS partman.partition_management")
 	require.NoError(t, err)
 }
 
 func TestManager(t *testing.T) {
-	t.Run("NewManager", func(t *testing.T) {
+	t.Run("NewAndStart", func(t *testing.T) {
 		db, pool := setupTestDB(t)
 		defer cleanupTestDB(t, db, pool)
 
@@ -76,8 +76,8 @@ func TestManager(t *testing.T) {
 		defer dropTestTable(t, context.Background(), db)
 
 		logger := slog.Default()
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
@@ -93,7 +93,7 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Now())
 
-		manager, err := NewManager(db, config, logger, clock)
+		manager, err := NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 		require.NotNil(t, manager)
 	})
@@ -106,8 +106,8 @@ func TestManager(t *testing.T) {
 		defer dropTestTable(t, context.Background(), db)
 
 		logger := slog.Default()
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
@@ -123,14 +123,14 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Now())
 
-		manager, err := NewManager(db, config, logger, clock)
+		manager, err := NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
 		err = manager.Start(context.Background())
 		require.NoError(t, err)
 
 		var count int
-		err = db.Get(&count, "SELECT COUNT(*) FROM partition_management WHERE table_name = $1", "test_table")
+		err = db.Get(&count, "SELECT COUNT(*) FROM partman.partition_management WHERE table_name = $1", "test_table")
 		require.NoError(t, err)
 		require.Equal(t, 1, count)
 	})
@@ -152,8 +152,8 @@ func TestManager(t *testing.T) {
 		}
 
 		logger := slog.Default()
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				tableConfig,
@@ -162,7 +162,7 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Now())
 
-		_, err := NewManager(db, config, logger, clock)
+		_, err := NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
 		var partitionCount uint
@@ -179,8 +179,8 @@ func TestManager(t *testing.T) {
 		defer dropTestTable(t, context.Background(), db)
 
 		logger := slog.Default()
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
@@ -195,7 +195,7 @@ func TestManager(t *testing.T) {
 		}
 		clock := NewSimulatedClock(time.Now())
 
-		manager, err := NewManager(db, config, logger, clock)
+		manager, err := NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
 		clock.AdvanceTime(time.Hour + time.Minute)
@@ -217,8 +217,8 @@ func TestManager(t *testing.T) {
 		defer dropTestTable(t, context.Background(), db)
 
 		logger := slog.Default()
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
@@ -234,7 +234,7 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Now())
 
-		manager, err := NewManager(db, config, logger, clock)
+		manager, err := NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -298,9 +298,16 @@ func TestManager(t *testing.T) {
 				PartitionType: TypeRange,
 				PartitionBy:   "created_at",
 			}
+			manager.config = &Config{
+				SchemaName: "test",
+				Tables: []TableConfig{
+					tableConfig,
+				},
+			}
+
 			sql, err := manager.generatePartitionSQL("test_table_20240315", tableConfig, bounds)
 			require.NoError(t, err)
-			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test_table_20240315 PARTITION OF test_table FOR VALUES FROM ('2024-03-15') TO ('2024-03-16');")
+			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.test_table_20240315 PARTITION OF test.test_table FOR VALUES FROM ('2024-03-15') TO ('2024-03-16');")
 		})
 
 		t.Run("with tenant ID", func(t *testing.T) {
@@ -310,9 +317,16 @@ func TestManager(t *testing.T) {
 				PartitionType: TypeRange,
 				PartitionBy:   "created_at",
 			}
+			manager.config = &Config{
+				SchemaName: "test",
+				Tables: []TableConfig{
+					tableConfig,
+				},
+			}
+
 			sql, err := manager.generatePartitionSQL("test_table_20240315", tableConfig, bounds)
 			require.NoError(t, err)
-			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test_table_20240315 PARTITION OF test_table FOR VALUES FROM ('tenant1', '2024-03-15') TO ('tenant1', '2024-03-16');")
+			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.test_table_20240315 PARTITION OF test.test_table FOR VALUES FROM ('tenant1', '2024-03-15') TO ('tenant1', '2024-03-16');")
 		})
 	})
 
@@ -325,8 +339,8 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		clock := NewSimulatedClock(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC))
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
@@ -340,7 +354,7 @@ func TestManager(t *testing.T) {
 			},
 		}
 
-		manager, err := NewManager(db, config, logger, clock)
+		manager, err := NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
 		exists, err := manager.partitionExists(context.Background(), "test_table_20240315")
@@ -369,8 +383,8 @@ func TestManager(t *testing.T) {
 		}
 
 		logger := slog.Default()
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				tableConfig,
@@ -381,7 +395,7 @@ func TestManager(t *testing.T) {
 
 		ctx := context.Background()
 
-		_, err = NewManager(db, config, logger, clock)
+		_, err = NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
 		// Verify partitions were created
@@ -397,7 +411,7 @@ func TestManager(t *testing.T) {
 		require.Contains(t, partitionName, "tenant1", "Partition name should include tenant ID")
 
 		var exists bool
-		err = db.QueryRowxContext(ctx, "select exists(select 1 from partition_management where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
+		err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.partition_management where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
 		require.NoError(t, err)
 		require.True(t, exists)
 	})
@@ -433,8 +447,8 @@ func TestManager(t *testing.T) {
 		}
 
 		logger := slog.Default()
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				tenantOneConfig,
@@ -446,7 +460,7 @@ func TestManager(t *testing.T) {
 
 		ctx := context.Background()
 
-		_, err = NewManager(db, config, logger, clock)
+		_, err = NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
 		partitionNames := []string{
@@ -482,7 +496,7 @@ func TestManager(t *testing.T) {
 			}
 
 			var exists bool
-			err = db.QueryRowxContext(ctx, "select exists(select 1 from partition_management where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
+			err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.partition_management where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
 			require.NoError(t, err)
 			require.True(t, exists)
 
@@ -504,8 +518,8 @@ func TestManager(t *testing.T) {
 		defer dropTestTable(t, ctx, db)
 
 		// Setup manager config with two tenants
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
@@ -536,11 +550,11 @@ func TestManager(t *testing.T) {
 		clock := NewSimulatedClock(now)
 
 		// Create and initialize manager
-		manager, err := NewManager(db, config, logger, clock)
+		manager, err := NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
 		// Insert test data for both tenants
-		insertSQL := `INSERT INTO test_table (id, project_id, created_at) VALUES ($1, $2, $3)`
+		insertSQL := `INSERT INTO test.test_table (id, project_id, created_at) VALUES ($1, $2, $3)`
 
 		for i := 0; i < 10; i++ {
 			// Insert for tenant_1
@@ -561,7 +575,7 @@ func TestManager(t *testing.T) {
 		// Verify initial data
 		for _, tenantID := range []string{"tenant_1", "tenant_2"} {
 			var count int
-			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM test_table WHERE project_id = $1", tenantID)
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM test.test_table WHERE project_id = $1", tenantID)
 			require.NoError(t, err)
 			require.Equal(t, 10, count)
 		}
@@ -579,7 +593,7 @@ func TestManager(t *testing.T) {
 		for _, tenantID := range []string{"tenant_1", "tenant_2"} {
 			var count int
 			err = db.GetContext(ctx, &count,
-				"SELECT COUNT(*) FROM test_table WHERE project_id = $1",
+				"SELECT COUNT(*) FROM test.test_table WHERE project_id = $1",
 				tenantID,
 			)
 			require.NoError(t, err)
@@ -600,8 +614,8 @@ func TestManager(t *testing.T) {
 		defer dropTestTable(t, ctx, db)
 
 		// Initial configuration with two tenants
-		config := Config{
-			SchemaName: "public",
+		config := &Config{
+			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []TableConfig{
 				{
@@ -632,7 +646,7 @@ func TestManager(t *testing.T) {
 		clock := NewSimulatedClock(now)
 
 		// Create and initialize manager
-		manager, err := NewManager(db, config, logger, clock)
+		manager, err := NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
 		// Add a new managed table
@@ -656,7 +670,7 @@ func TestManager(t *testing.T) {
 		require.Equal(t, 2, partitionCount)
 
 		// Insert rows for the new tenant
-		insertSQL := `INSERT INTO test_table (id, project_id, created_at) VALUES ($1, $2, $3)`
+		insertSQL := `INSERT INTO test.test_table (id, project_id, created_at) VALUES ($1, $2, $3)`
 		for i := 0; i < 5; i++ {
 			_, err = db.ExecContext(context.Background(), insertSQL,
 				ulid.Make().String(), "tenant_3",
@@ -668,7 +682,7 @@ func TestManager(t *testing.T) {
 		clock.AdvanceTime(time.Hour)
 
 		var count int
-		err = db.QueryRowxContext(ctx, "select count(*) from test_table where project_id = $1;", newTableConfig.TenantId).Scan(&count)
+		err = db.QueryRowxContext(ctx, "select count(*) from test.test_table where project_id = $1;", newTableConfig.TenantId).Scan(&count)
 		require.NoError(t, err)
 		require.Equal(t, count, 5)
 
@@ -682,7 +696,7 @@ func TestManager(t *testing.T) {
 		require.Equal(t, 1, partitionCount)
 
 		var exists bool
-		err = db.QueryRowxContext(ctx, "select exists(select 1 from test_table where project_id = $1);", newTableConfig.TenantId).Scan(&exists)
+		err = db.QueryRowxContext(ctx, "select exists(select 1 from test.test_table where project_id = $1);", newTableConfig.TenantId).Scan(&exists)
 		require.NoError(t, err)
 		require.False(t, exists)
 	})

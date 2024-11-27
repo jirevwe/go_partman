@@ -72,9 +72,9 @@ func NewAndStart(db *sqlx.DB, config *Config, logger *slog.Logger, clock Clock) 
 
 	m := &Manager{
 		db:     db,
-		config: config,
-		logger: logger,
 		clock:  clock,
+		logger: logger,
+		config: config,
 		wg:     &sync.WaitGroup{},
 		stop:   make(chan struct{}),
 	}
@@ -100,6 +100,7 @@ func NewAndStart(db *sqlx.DB, config *Config, logger *slog.Logger, clock Clock) 
 // runUpgrades runs all the migrations on the management tables while keeping them backwards compatible
 func (m *Manager) runMigrations(ctx context.Context) error {
 	migrations := []string{
+		createPartManSchema,
 		createManagementTable,
 		createUniqueIndex,
 	}
@@ -113,7 +114,7 @@ func (m *Manager) runMigrations(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) initialize(ctx context.Context, config Config) error {
+func (m *Manager) initialize(ctx context.Context, config *Config) error {
 	// Create management table to track partitioned tables
 	if _, err := m.db.ExecContext(ctx, createManagementTable); err != nil {
 		return fmt.Errorf("failed to create management table: %w", err)
@@ -131,6 +132,7 @@ func (m *Manager) initialize(ctx context.Context, config Config) error {
 		res, err := m.db.ExecContext(ctx, upsertSQL,
 			ulid.Make().String(),
 			table.Name,
+			config.SchemaName,
 			table.TenantId,
 			table.TenantIdColumn,
 			table.PartitionBy,
@@ -157,11 +159,6 @@ func (m *Manager) initialize(ctx context.Context, config Config) error {
 		}
 	}
 
-	// Start the maintenance routine
-	if err := m.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start maintenance routine: %w", err)
-	}
-
 	return nil
 }
 
@@ -174,7 +171,7 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc TableConfig, ah
 		pattern = fmt.Sprintf("%s_%s_%%", tc.Name, tc.TenantId)
 	}
 
-	err := m.db.QueryRowContext(ctx, getlatestPartition, pattern).Scan(&latestPartition)
+	err := m.db.QueryRowContext(ctx, getlatestPartition, m.config.SchemaName, pattern).Scan(&latestPartition)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to get latest partition: %w", err)
 	}
@@ -234,7 +231,7 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc TableConfig, ah
 // partitionExists checks if a partition table already exists
 func (m *Manager) partitionExists(ctx context.Context, partitionName string) (bool, error) {
 	var exists bool
-	err := m.db.QueryRowContext(ctx, getPartitionExists, partitionName).Scan(&exists)
+	err := m.db.QueryRowContext(ctx, getPartitionExists, m.config.SchemaName, partitionName).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check partition existence: %w", err)
 	}
@@ -246,6 +243,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 	// Get all managed tables and their retention periods
 	type managedTable struct {
 		TableName       string       `db:"table_name"`
+		SchemaName      string       `db:"schema_name"`
 		TenantId        string       `db:"tenant_id"`
 		RetentionPeriod TimeDuration `db:"retention_period"`
 	}
@@ -264,7 +262,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 		}
 
 		var partitions []string
-		if err := m.db.SelectContext(ctx, &partitions, partitionsQuery, pattern); err != nil {
+		if err := m.db.SelectContext(ctx, &partitions, partitionsQuery, m.config.SchemaName, pattern); err != nil {
 			return fmt.Errorf("failed to fetch partitions for table %s: %w", table.TableName, err)
 		}
 
@@ -287,7 +285,8 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 			if partitionDate.Before(cutoffTime) {
 				if m.hook != nil {
 					// run any pre-drop hooks (backup data, upload to object storage)
-					if err := m.hook(ctx, partition); err != nil {
+					// todo(raymond): pass a context with a deadline to this func
+					if err = m.hook(ctx, partition); err != nil {
 						m.logger.Error("failed to run pre-drop hooks",
 							"partition", partition,
 							"error", err)
@@ -301,7 +300,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 					"date", partitionDate)
 
 				// Drop the partition
-				if _, err := m.db.ExecContext(ctx, fmt.Sprintf(dropPartition, partition)); err != nil {
+				if _, err = m.db.ExecContext(ctx, fmt.Sprintf(dropPartition, m.config.SchemaName, partition)); err != nil {
 					m.logger.Error("failed to drop partition",
 						"partition", partition,
 						"error", err)
@@ -339,8 +338,8 @@ func (m *Manager) createPartition(ctx context.Context, tableConfig TableConfig, 
 	return nil
 }
 
-// maintain defines a regularly run maintenance routine
-func (m *Manager) maintain(ctx context.Context) error {
+// Maintain defines a regularly run maintenance routine
+func (m *Manager) Maintain(ctx context.Context) error {
 	// loop all tables and run maintenance
 
 	for i := 0; i < len(m.config.Tables); i++ {
@@ -374,11 +373,17 @@ func (m *Manager) generatePartitionSQL(name string, tc TableConfig, b Bounds) (s
 
 func (m *Manager) generateRangePartitionSQL(name string, tc TableConfig, b Bounds) string {
 	if len(tc.TenantId) > 0 {
-		return fmt.Sprintf(generatePartitionWithTenantIdQuery, name, tc.Name,
+		return fmt.Sprintf(generatePartitionWithTenantIdQuery,
+			m.config.SchemaName, name,
+			m.config.SchemaName, tc.Name,
 			tc.TenantId, b.From.Format(time.DateOnly),
 			tc.TenantId, b.To.Format(time.DateOnly))
 	}
-	return fmt.Sprintf(generatePartitionQuery, name, tc.Name, b.From.Format(time.DateOnly), b.To.Format(time.DateOnly))
+	return fmt.Sprintf(generatePartitionQuery,
+		m.config.SchemaName, name,
+		m.config.SchemaName, tc.Name,
+		b.From.Format(time.DateOnly),
+		b.To.Format(time.DateOnly))
 }
 
 func (m *Manager) checkTableColumnsExist(ctx context.Context, tc TableConfig) error {
@@ -449,8 +454,8 @@ func (m *Manager) Start(ctx context.Context) error {
 			case <-m.stop:
 				return
 			case <-ticker.C:
-				if err := m.maintain(ctx); err != nil {
-					m.logger.Error("maintenance error", "error", err)
+				if err := m.Maintain(ctx); err != nil {
+					m.logger.Error("an error occurred while running maintenance", "error", err)
 				}
 			}
 		}
@@ -476,6 +481,7 @@ func (m *Manager) AddManagedTable(tc TableConfig) error {
 	res, err := m.db.ExecContext(ctx, upsertSQL,
 		ulid.Make().String(),
 		tc.Name,
+		m.config.SchemaName,
 		tc.TenantId,
 		tc.TenantIdColumn,
 		tc.PartitionBy,

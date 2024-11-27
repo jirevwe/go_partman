@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	config := partition.Config{
+	config := &partition.Config{
 		Tables: []partition.TableConfig{
 			{
 				Name:              "samples",
@@ -35,7 +35,7 @@ func main() {
 		SchemaName: "public",
 	}
 
-	manager, err := partition.NewManager(nil, config, slog.New(slog.NewTextHandler(os.Stdout, nil)), partition.NewRealClock())
+	manager, err := partition.NewAndStart(nil, config, slog.New(slog.NewTextHandler(os.Stdout, nil)), partition.NewRealClock())
 	if err != nil {
 		log.Fatal(err)
 	}

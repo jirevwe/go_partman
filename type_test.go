@@ -72,7 +72,7 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				SchemaName: "test_schema",
 				SampleRate: time.Second,
-				Tables: []TableConfig{
+				Tables: []Table{
 					{},
 				},
 			},
@@ -83,9 +83,9 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				SchemaName: "test_schema",
 				SampleRate: time.Second,
-				Tables: []TableConfig{
+				Tables: []Table{
 					{
-						Name:            "test_table",
+						Name:            "sample",
 						PartitionType:   TypeRange,
 						RetentionPeriod: OneDay,
 					},
@@ -98,9 +98,9 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				SchemaName: "test_schema",
 				SampleRate: time.Second,
-				Tables: []TableConfig{
+				Tables: []Table{
 					{
-						Name:            "test_table",
+						Name:            "sample",
 						PartitionType:   TypeRange,
 						PartitionBy:     "col1",
 						RetentionPeriod: OneMonth,
@@ -114,9 +114,9 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				SchemaName: "test_schema",
 				SampleRate: time.Second,
-				Tables: []TableConfig{
+				Tables: []Table{
 					{
-						Name:              "test_table",
+						Name:              "sample",
 						PartitionType:     TypeRange,
 						PartitionBy:       "col1",
 						PartitionInterval: OneDay,
@@ -131,9 +131,9 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				SchemaName: "test_schema",
 				SampleRate: time.Second,
-				Tables: []TableConfig{
+				Tables: []Table{
 					{
-						Name:              "test_table",
+						Name:              "sample",
 						PartitionType:     TypeRange,
 						PartitionBy:       "col1",
 						PartitionInterval: OneDay,
@@ -147,9 +147,9 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				SchemaName: "test_schema",
 				SampleRate: time.Second,
-				Tables: []TableConfig{
+				Tables: []Table{
 					{
-						Name:              "test_table",
+						Name:              "sample",
 						PartitionType:     TypeRange,
 						PartitionBy:       "col1",
 						PartitionInterval: OneDay,
@@ -166,9 +166,9 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				SchemaName: "test_schema",
 				SampleRate: time.Second,
-				Tables: []TableConfig{
+				Tables: []Table{
 					{
-						Name:              "test_table",
+						Name:              "sample",
 						PartitionType:     TypeRange,
 						PartitionBy:       "col1",
 						PartitionInterval: OneDay,
@@ -185,9 +185,9 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				SchemaName: "test_schema",
 				SampleRate: time.Second,
-				Tables: []TableConfig{
+				Tables: []Table{
 					{
-						Name:              "test_table",
+						Name:              "sample",
 						PartitionType:     TypeRange,
 						PartitionBy:       "col1",
 						PartitionInterval: OneDay,

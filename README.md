@@ -39,7 +39,7 @@ config := partman.Config{
             PartitionType:     partman.TypeRange,
             PartitionBy:       "created_at",
             PartitionInterval: partman.OneDay,    // Daily partitions
-            PreCreateCount:    7,                   // Create 7 days ahead
+            PartitionCount:    7,                   // Create 7 days ahead
             RetentionPeriod:   partman.OneMonth,  // Keep 1 month of data
         },
     },
@@ -77,7 +77,7 @@ config := partman.Config{
             PartitionType:     partman.TypeRange,
             PartitionBy:       "created_at",
             PartitionInterval: partman.OneDay,
-            PreCreateCount:    7,
+            PartitionCount:    7,
             RetentionPeriod:   partman.OneMonth,
         },
     },
@@ -96,7 +96,7 @@ newTableConfig := partman.TableConfig{
     PartitionType:     partman.TypeRange,
     PartitionBy:       "created_at",
     PartitionInterval: partman.OneDay,
-    PreCreateCount:    7,
+    PartitionCount:    7,
     RetentionPeriod:   partman.OneMonth,
 }
 
@@ -147,7 +147,7 @@ Built-in time intervals:
 
 ### Maintenance Operations
 
-- Automatically creates new partitions ahead of time based on `PreCreateCount`
+- Automatically creates new partitions ahead of time based on `PartitionCount`
 - Drops old partitions based on `RetentionPeriod`
 - Supports custom pre-drop hooks for data archival or backup operations
 

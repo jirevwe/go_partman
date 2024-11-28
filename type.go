@@ -137,7 +137,7 @@ const (
 
 type Partitioner interface {
 	// CreateFuturePartitions Create new partitions ahead of time
-	CreateFuturePartitions(ctx context.Context, tableConfig TableConfig, ahead uint) error
+	CreateFuturePartitions(ctx context.Context, tableConfig Table, ahead uint) error
 
 	// DropOldPartitions Drop old partitions based on retention policy
 	DropOldPartitions(ctx context.Context) error
@@ -152,9 +152,12 @@ type D struct {
 	Value string
 }
 
-type TableConfig struct {
+type Table struct {
 	// Name of the partitioned table
 	Name string
+
+	// Schema of the partitioned table
+	Schema string
 
 	// TenantId Tenant ID column value (e.g., 01J2V010NV1259CYWQEYQC8F35)
 	TenantId string
@@ -171,8 +174,8 @@ type TableConfig struct {
 	// PartitionInterval For range partitions (e.g., "1 month", "1 day")
 	PartitionInterval TimeDuration
 
-	// PreCreateCount is the number of partitions to create ahead when the partition is first created
-	PreCreateCount uint
+	// PartitionCount is the number of partitions a table will have; defaults to 10
+	PartitionCount uint
 
 	// RetentionPeriod is how long after which partitions will be dropped (e.g., "1 month", "1 day")
 	RetentionPeriod TimeDuration
@@ -186,7 +189,7 @@ type Config struct {
 	SampleRate time.Duration
 
 	// Tables holds all the partitioned tables being managed
-	Tables []TableConfig
+	Tables []Table
 }
 
 // Validate checks if the configuration is valid
@@ -213,7 +216,7 @@ func (c *Config) Validate() error {
 }
 
 // Validate checks if the table configuration is valid
-func (tc *TableConfig) Validate() error {
+func (tc *Table) Validate() error {
 	if tc.Name == "" {
 		return errors.New("name cannot be empty")
 	}
@@ -235,8 +238,8 @@ func (tc *TableConfig) Validate() error {
 	}
 
 	// set default value
-	if tc.PreCreateCount == 0 {
-		tc.PreCreateCount = 10
+	if tc.PartitionCount == 0 {
+		tc.PartitionCount = 10
 	}
 
 	if tc.PartitionType == TypeRange {

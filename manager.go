@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/jmoiron/sqlx"
-	"github.com/oklog/ulid/v2"
 	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jmoiron/sqlx"
+	"github.com/oklog/ulid/v2"
 )
 
 // Manager Partition manager
@@ -100,7 +101,7 @@ func NewAndStart(db *sqlx.DB, config *Config, logger *slog.Logger, clock Clock) 
 // runUpgrades runs all the migrations on the management tables while keeping them backwards compatible
 func (m *Manager) runMigrations(ctx context.Context) error {
 	migrations := []string{
-		createPartManSchema,
+		createSchema,
 		createManagementTable,
 		createUniqueIndex,
 	}
@@ -137,6 +138,7 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 			table.TenantIdColumn,
 			table.PartitionBy,
 			table.PartitionType,
+			table.PartitionCount,
 			table.PartitionInterval,
 			table.RetentionPeriod,
 		)
@@ -153,8 +155,8 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 			return fmt.Errorf("failed to upsert table config for %s", table.Name)
 		}
 
-		// Create future partitions based on PreCreateCount
-		if err = m.CreateFuturePartitions(ctx, table, table.PreCreateCount); err != nil {
+		// Create future partitions based on PartitionCount
+		if err = m.CreateFuturePartitions(ctx, table, table.PartitionCount); err != nil {
 			return fmt.Errorf("failed to create future partitions for %s: %w", table.Name, err)
 		}
 	}
@@ -162,16 +164,27 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 	return nil
 }
 
-func (m *Manager) CreateFuturePartitions(ctx context.Context, tc TableConfig, ahead uint) error {
-	var latestPartition string
-
+func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table, ahead uint) error {
 	// Get the latest partition's end time
 	pattern := fmt.Sprintf("%s_%%", tc.Name)
 	if len(tc.TenantId) > 0 {
 		pattern = fmt.Sprintf("%s_%s_%%", tc.Name, tc.TenantId)
 	}
 
-	err := m.db.QueryRowContext(ctx, getlatestPartition, m.config.SchemaName, pattern).Scan(&latestPartition)
+	// Fetch the current number of partitions for the table
+	var partitionCount int
+	err := m.db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", pattern, m.config.SchemaName)
+	if err != nil {
+		return fmt.Errorf("failed to fetch current partition count: %w", err)
+	}
+
+	// Check if the current partition count equals PartitionCount
+	if partitionCount >= int(tc.PartitionCount) {
+		return fmt.Errorf("cannot create more partitions; current count (%d) equals PartitionCount (%d)", partitionCount, tc.PartitionCount)
+	}
+
+	var latestPartition string
+	err = m.db.QueryRowContext(ctx, getlatestPartition, m.config.SchemaName, pattern).Scan(&latestPartition)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to get latest partition: %w", err)
 	}
@@ -262,7 +275,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 		}
 
 		var partitions []string
-		if err := m.db.SelectContext(ctx, &partitions, partitionsQuery, m.config.SchemaName, pattern); err != nil {
+		if err := m.db.SelectContext(ctx, &partitions, partitionsQuery, table.SchemaName, pattern); err != nil {
 			return fmt.Errorf("failed to fetch partitions for table %s: %w", table.TableName, err)
 		}
 
@@ -319,7 +332,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 }
 
 // createPartition creates a partition for a table
-func (m *Manager) createPartition(ctx context.Context, tableConfig TableConfig, bounds Bounds) error {
+func (m *Manager) createPartition(ctx context.Context, tableConfig Table, bounds Bounds) error {
 	// Generate partition name based on bounds
 	partitionName := m.generatePartitionName(tableConfig, bounds)
 
@@ -360,7 +373,7 @@ func (m *Manager) Maintain(ctx context.Context) error {
 }
 
 // generatePartitionSQL generates the name of the partition table
-func (m *Manager) generatePartitionSQL(name string, tc TableConfig, b Bounds) (string, error) {
+func (m *Manager) generatePartitionSQL(name string, tc Table, b Bounds) (string, error) {
 	switch tc.PartitionType {
 	case "range":
 		return m.generateRangePartitionSQL(name, tc, b), nil
@@ -371,7 +384,7 @@ func (m *Manager) generatePartitionSQL(name string, tc TableConfig, b Bounds) (s
 	}
 }
 
-func (m *Manager) generateRangePartitionSQL(name string, tc TableConfig, b Bounds) string {
+func (m *Manager) generateRangePartitionSQL(name string, tc Table, b Bounds) string {
 	if len(tc.TenantId) > 0 {
 		return fmt.Sprintf(generatePartitionWithTenantIdQuery,
 			m.config.SchemaName, name,
@@ -386,7 +399,7 @@ func (m *Manager) generateRangePartitionSQL(name string, tc TableConfig, b Bound
 		b.To.Format(time.DateOnly))
 }
 
-func (m *Manager) checkTableColumnsExist(ctx context.Context, tc TableConfig) error {
+func (m *Manager) checkTableColumnsExist(ctx context.Context, tc Table) error {
 	if len(tc.TenantIdColumn) > 0 {
 		var exists bool
 		err := m.db.QueryRowxContext(ctx, checkColumnExists, m.config.SchemaName, tc.Name, tc.TenantIdColumn).Scan(&exists)
@@ -412,7 +425,7 @@ func (m *Manager) checkTableColumnsExist(ctx context.Context, tc TableConfig) er
 	return nil
 }
 
-func (m *Manager) generatePartitionName(tc TableConfig, bounds Bounds) string {
+func (m *Manager) generatePartitionName(tc Table, bounds Bounds) string {
 	datePart := strings.ReplaceAll(bounds.From.Format(time.DateOnly), "-", "")
 	if len(tc.TenantId) > 0 {
 		return fmt.Sprintf("%s_%s_%s", tc.Name, tc.TenantId, datePart)
@@ -470,7 +483,7 @@ func (m *Manager) Stop() {
 }
 
 // AddManagedTable adds a new managed table to the partition manager
-func (m *Manager) AddManagedTable(tc TableConfig) error {
+func (m *Manager) AddManagedTable(tc Table) error {
 	// Validate the new table configuration
 	if err := tc.Validate(); err != nil {
 		return err
@@ -486,6 +499,7 @@ func (m *Manager) AddManagedTable(tc TableConfig) error {
 		tc.TenantIdColumn,
 		tc.PartitionBy,
 		tc.PartitionType,
+		tc.PartitionCount,
 		tc.PartitionInterval,
 		tc.RetentionPeriod,
 	)
@@ -503,7 +517,7 @@ func (m *Manager) AddManagedTable(tc TableConfig) error {
 	}
 
 	// Create future partitions for the new table
-	if err = m.CreateFuturePartitions(ctx, tc, tc.PreCreateCount); err != nil {
+	if err = m.CreateFuturePartitions(ctx, tc, tc.PartitionCount); err != nil {
 		return fmt.Errorf("failed to create future partitions for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
 	}
 

@@ -1,6 +1,6 @@
 package partman
 
-var createPartManSchema = `CREATE SCHEMA IF NOT EXISTS partman;`
+var createSchema = `CREATE SCHEMA IF NOT EXISTS partman;`
 
 var createManagementTable = `
 CREATE TABLE IF NOT EXISTS partman.partition_management (
@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS partman.partition_management (
 	partition_type TEXT NOT NULL,
 	partition_interval TEXT NOT NULL,
 	retention_period TEXT NOT NULL,
+	partition_count INT NOT NULL DEFAULT 10,
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`
@@ -22,14 +23,15 @@ var createUniqueIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_table_name_tenant
 var upsertSQL = `
 INSERT INTO partman.partition_management (
 	id,	table_name, schema_name, tenant_id,
-	tenant_column, partition_by, partition_type, 
-	partition_interval, retention_period
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	tenant_column, partition_by, partition_type,
+	partition_count, partition_interval,
+	retention_period
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (table_name, tenant_id) 
-DO UPDATE SET 
-	partition_type = EXCLUDED.partition_type,
+DO UPDATE SET
 	partition_interval = EXCLUDED.partition_interval,
 	retention_period = EXCLUDED.retention_period,
+	partition_count = EXCLUDED.partition_count,
 	updated_at = now();`
 
 var getlatestPartition = `
@@ -39,9 +41,9 @@ WHERE schemaname = $1 AND tablename LIKE $2
 ORDER BY tablename DESC 
 LIMIT 1;`
 
-// todo(raymond): paginate this query
+// todo(raymond): paginate this query?
 var getManagedTablesRetentionPeriods = `
-SELECT table_name, schema_name, tenant_id, retention_period 
+SELECT table_name, schema_name, tenant_id, retention_period
 FROM partman.partition_management;`
 
 var getPartitionExists = `

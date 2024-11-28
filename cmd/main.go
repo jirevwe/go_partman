@@ -11,7 +11,7 @@ import (
 
 func main() {
 	config := &partition.Config{
-		Tables: []partition.TableConfig{
+		Tables: []partition.Table{
 			{
 				Name:              "samples",
 				TenantId:          "project_id_asd",

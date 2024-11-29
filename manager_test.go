@@ -695,3 +695,252 @@ func TestManager(t *testing.T) {
 		require.False(t, exists)
 	})
 }
+
+func TestNewManager(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		createTestTable(t, context.Background(), db)
+		defer dropTestTable(t, context.Background(), db)
+
+		logger := slog.Default()
+		config := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "sample",
+					PartitionType:     TypeRange,
+					PartitionBy:       "created_at",
+					PartitionInterval: OneDay,
+					RetentionPeriod:   OneWeek,
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(logger),
+			WithConfig(config),
+			WithClock(clock),
+		)
+		require.NoError(t, err)
+		require.NotNil(t, manager)
+	})
+
+	t.Run("Error - DB must not be nil", func(t *testing.T) {
+		logger := slog.Default()
+		config := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "sample",
+					PartitionType:     TypeRange,
+					PartitionBy:       "created_at",
+					PartitionInterval: OneDay,
+					RetentionPeriod:   OneWeek,
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		manager, err := NewManager(
+			WithLogger(logger),
+			WithConfig(config),
+			WithClock(clock),
+		)
+		require.Error(t, err)
+		require.Nil(t, manager)
+		require.Equal(t, ErrDbDriverMustNotBeNil, err)
+	})
+
+	t.Run("Error - Logger must not be nil", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		config := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "sample",
+					PartitionType:     TypeRange,
+					PartitionBy:       "created_at",
+					PartitionInterval: OneDay,
+					RetentionPeriod:   OneWeek,
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithConfig(config),
+			WithClock(clock),
+		)
+		require.Error(t, err)
+		require.Nil(t, manager)
+		require.Equal(t, ErrLoggerMustNotBeNil, err)
+	})
+
+	t.Run("Error - Config must not be nil", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		logger := slog.Default()
+		clock := NewSimulatedClock(time.Now())
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(logger),
+			WithClock(clock),
+		)
+		require.Error(t, err)
+		require.Nil(t, manager)
+		require.Equal(t, ErrConfigMustNotBeNil, err)
+	})
+
+	t.Run("Error - Clock must not be nil", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		logger := slog.Default()
+		config := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "sample",
+					PartitionType:     TypeRange,
+					PartitionBy:       "created_at",
+					PartitionInterval: OneDay,
+					RetentionPeriod:   OneWeek,
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(logger),
+			WithConfig(config),
+		)
+		require.Error(t, err)
+		require.Nil(t, manager)
+		require.Equal(t, ErrClockMustNotBeNil, err)
+	})
+
+	t.Run("AddManagedTable", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Create test table with tenant support
+		_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+		require.NoError(t, err)
+		defer dropTestTable(t, ctx, db)
+
+		// Initial configuration with two tenants
+		config := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "sample",
+					TenantId:          "tenant_1",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: OneDay,
+					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PartitionCount:    2,
+				},
+				{
+					Name:              "sample",
+					TenantId:          "tenant_2",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: OneDay,
+					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		logger := slog.Default()
+		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		clock := NewSimulatedClock(now)
+
+		// Create and initialize manager
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(logger),
+			WithClock(clock),
+			WithConfig(config),
+		)
+		require.NoError(t, err)
+
+		// Add a new managed table
+		newTableConfig := Table{
+			Name:              "sample",
+			TenantId:          "tenant_3",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: OneDay,
+			RetentionPeriod:   TimeDuration(1 * time.Minute),
+			PartitionCount:    2,
+		}
+		err = manager.AddManagedTable(newTableConfig)
+		require.NoError(t, err)
+
+		// Verify that the new tenant's partitions exist
+		var partitionCount int
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "sample_tenant_3%")
+		require.NoError(t, err)
+		require.Equal(t, 2, partitionCount)
+
+		// Insert rows for the new tenant
+		insertSQL := `INSERT INTO test.sample (id, project_id, created_at) VALUES ($1, $2, $3)`
+		for i := 0; i < 5; i++ {
+			_, err = db.ExecContext(context.Background(), insertSQL,
+				ulid.Make().String(), "tenant_3",
+				now.Add(time.Duration(i)*time.Minute),
+			)
+			require.NoError(t, err)
+		}
+
+		clock.AdvanceTime(time.Hour)
+
+		var count int
+		err = db.QueryRowxContext(ctx, "select count(*) from test.sample where project_id = $1;", newTableConfig.TenantId).Scan(&count)
+		require.NoError(t, err)
+		require.Equal(t, count, 5)
+
+		// Run retention for the tenant
+		err = manager.DropOldPartitions(context.Background())
+		require.NoError(t, err)
+
+		// Verify that the new tenant's partitions exist
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "sample_tenant_3%")
+		require.NoError(t, err)
+		require.Equal(t, 1, partitionCount)
+
+		var exists bool
+		err = db.QueryRowxContext(ctx, "select exists(select 1 from test.sample where project_id = $1);", newTableConfig.TenantId).Scan(&exists)
+		require.NoError(t, err)
+		require.False(t, exists)
+	})
+}

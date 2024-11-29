@@ -59,7 +59,7 @@ func WithConfig(config *Config) Option {
 			return ErrConfigMustNotBeNil
 		}
 
-		if err := m.config.Validate(); err != nil {
+		if err := config.Validate(); err != nil {
 			return err
 		}
 

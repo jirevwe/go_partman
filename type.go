@@ -202,10 +202,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("sample-rate cannot be zero")
 	}
 
-	if len(c.Tables) == 0 {
-		return fmt.Errorf("at least one table configuration is required")
-	}
-
 	for i, table := range c.Tables {
 		if err := table.Validate(); err != nil {
 			return fmt.Errorf("table[%d]: %w", i, err)

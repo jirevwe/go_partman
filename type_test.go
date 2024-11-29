@@ -60,14 +60,6 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: "schema name cannot be empty",
 		},
 		{
-			name: "no tables",
-			config: Config{
-				SchemaName: "test_schema",
-				SampleRate: time.Second,
-			},
-			wantErr: "at least one table configuration is required",
-		},
-		{
 			name: "empty table name",
 			config: Config{
 				SchemaName: "test_schema",

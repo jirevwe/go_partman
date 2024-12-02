@@ -2,8 +2,6 @@ package partman
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -14,6 +12,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/oklog/ulid/v2"
 )
+
+// todo(raymond): add metrics
 
 // Manager Partition manager
 type Manager struct {
@@ -156,7 +156,7 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 		}
 
 		// Create future partitions based on PartitionCount
-		if err = m.CreateFuturePartitions(ctx, table, table.PartitionCount); err != nil {
+		if err = m.CreateFuturePartitions(ctx, table); err != nil {
 			return fmt.Errorf("failed to create future partitions for %s: %w", table.Name, err)
 		}
 	}
@@ -164,55 +164,15 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 	return nil
 }
 
-func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table, ahead uint) error {
-	// Get the latest partition's end time
-	pattern := fmt.Sprintf("%s_%%", tc.Name)
-	if len(tc.TenantId) > 0 {
-		pattern = fmt.Sprintf("%s_%s_%%", tc.Name, tc.TenantId)
-	}
-
-	// Fetch the current number of partitions for the table
-	var partitionCount int
-	err := m.db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", pattern, m.config.SchemaName)
-	if err != nil {
-		return fmt.Errorf("failed to fetch current partition count: %w", err)
-	}
-
-	// Check if the current partition count equals PartitionCount
-	if partitionCount >= int(tc.PartitionCount) {
-		return fmt.Errorf("cannot create more partitions; current count (%d) equals PartitionCount (%d)", partitionCount, tc.PartitionCount)
-	}
-
-	var latestPartition string
-	err = m.db.QueryRowContext(ctx, getlatestPartition, m.config.SchemaName, pattern).Scan(&latestPartition)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("failed to get latest partition: %w", err)
-	}
-
+func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 	// Determine start time for new partitions
-	var startTime time.Time
-	if errors.Is(err, sql.ErrNoRows) {
-		// No existing partitions, start from now
-		startTime = m.clock.Now()
-	} else {
-		// Extract date from partition name (format: table_name_YYYYMMDD or table_name_tenant_id_YYYYMMDD)
-		datePart, err := extractDateFromString(latestPartition)
-		if err != nil {
-			return err
-		}
-
-		startTime, err = time.Parse(DateNoHyphens, datePart)
-		if err != nil {
-			return fmt.Errorf("failed to parse partition date: %w", err)
-		}
-		startTime = startTime.Add(time.Duration(tc.PartitionInterval))
-	}
+	today := m.clock.Now()
 
 	// Create future partitions
-	for i := uint(0); i < ahead; i++ {
+	for i := uint(0); i < tc.PartitionCount; i++ {
 		bounds := Bounds{
-			From: startTime.Add(time.Duration(i) * time.Duration(tc.PartitionInterval)),
-			To:   startTime.Add(time.Duration(i+1) * time.Duration(tc.PartitionInterval)),
+			From: today.Add(time.Duration(i) * tc.PartitionInterval.Duration()),
+			To:   today.Add(time.Duration(i+1) * tc.PartitionInterval.Duration()),
 		}
 
 		// Check if partition already exists
@@ -227,7 +187,7 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table, ahead ui
 		}
 
 		// Create the partition
-		if err := m.createPartition(ctx, tc, bounds); err != nil {
+		if err = m.createPartition(ctx, tc, bounds); err != nil {
 			return fmt.Errorf("failed to create future partition: %w", err)
 		}
 
@@ -364,7 +324,7 @@ func (m *Manager) Maintain(ctx context.Context) error {
 		}
 
 		// Check for necessary future partitions
-		if err := m.CreateFuturePartitions(ctx, table, 1); err != nil {
+		if err := m.CreateFuturePartitions(ctx, table); err != nil {
 			return fmt.Errorf("failed to create future partitions: %w", err)
 		}
 	}
@@ -517,7 +477,7 @@ func (m *Manager) AddManagedTable(tc Table) error {
 	}
 
 	// Create future partitions for the new table
-	if err = m.CreateFuturePartitions(ctx, tc, tc.PartitionCount); err != nil {
+	if err = m.CreateFuturePartitions(ctx, tc); err != nil {
 		return fmt.Errorf("failed to create future partitions for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
 	}
 

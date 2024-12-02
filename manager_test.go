@@ -166,9 +166,91 @@ func TestManager(t *testing.T) {
 		require.NoError(t, err)
 
 		var partitionCount uint
-		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "sample_%")
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", config.SchemaName)
 		require.NoError(t, err)
 		require.Equal(t, tableConfig.PartitionCount, partitionCount)
+	})
+
+	t.Run("CreateFuturePartitionsWithExistingPartitionsInRange", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		createTestTable(t, context.Background(), db)
+		defer dropTestTable(t, context.Background(), db)
+
+		_, err := db.ExecContext(context.Background(), `
+		CREATE TABLE if not exists test.sample_20240101 PARTITION OF test.sample
+    	FOR VALUES FROM ('2024-01-01') TO ('2024-01-02');`)
+		require.NoError(t, err)
+
+		tableConfig := Table{
+			Name:              "sample",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: OneDay,
+			RetentionPeriod:   OneWeek,
+			PartitionCount:    10,
+		}
+
+		logger := slog.Default()
+		config := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables: []Table{
+				tableConfig,
+			},
+		}
+
+		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		_, err = NewAndStart(db, config, logger, clock)
+		require.NoError(t, err)
+
+		var partitionCount uint
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", config.SchemaName)
+		require.NoError(t, err)
+		require.Equal(t, tableConfig.PartitionCount, partitionCount)
+	})
+
+	t.Run("CreateFuturePartitionsWithExistingPartitionsOutOfRange", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		createTestTable(t, context.Background(), db)
+		defer dropTestTable(t, context.Background(), db)
+
+		_, err := db.ExecContext(context.Background(), `
+		CREATE TABLE if not exists test.sample_20231201 PARTITION OF test.sample
+    	FOR VALUES FROM ('2024-12-01') TO ('2024-12-02');`)
+		require.NoError(t, err)
+
+		tableConfig := Table{
+			Name:              "sample",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: OneDay,
+			RetentionPeriod:   OneWeek,
+			PartitionCount:    10,
+		}
+
+		logger := slog.Default()
+		config := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables: []Table{
+				tableConfig,
+			},
+		}
+
+		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		_, err = NewAndStart(db, config, logger, clock)
+		require.NoError(t, err)
+
+		var partitionCount uint
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", config.SchemaName)
+		require.NoError(t, err)
+		require.Equal(t, tableConfig.PartitionCount+1, partitionCount)
 	})
 
 	t.Run("DropOldPartitions", func(t *testing.T) {
@@ -299,7 +381,10 @@ func TestManager(t *testing.T) {
 				},
 			}
 
-			sql, err := manager.generatePartitionSQL("sample_20240315", tableConfig, bounds)
+			partitionName := manager.generatePartitionName(tableConfig, bounds)
+			require.Equal(t, "sample_20240315", partitionName)
+
+			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, bounds)
 			require.NoError(t, err)
 			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.sample_20240315 PARTITION OF test.sample FOR VALUES FROM ('2024-03-15') TO ('2024-03-16');")
 		})
@@ -318,9 +403,12 @@ func TestManager(t *testing.T) {
 				},
 			}
 
-			sql, err := manager.generatePartitionSQL("sample_20240315", tableConfig, bounds)
+			partitionName := manager.generatePartitionName(tableConfig, bounds)
+			require.Equal(t, "sample_tenant1_20240315", partitionName)
+
+			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, bounds)
 			require.NoError(t, err)
-			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.sample_20240315 PARTITION OF test.sample FOR VALUES FROM ('tenant1', '2024-03-15') TO ('tenant1', '2024-03-16');")
+			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.sample_tenant1_20240315 PARTITION OF test.sample FOR VALUES FROM ('tenant1', '2024-03-15') TO ('tenant1', '2024-03-16');")
 		})
 	})
 

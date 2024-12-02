@@ -137,7 +137,7 @@ const (
 
 type Partitioner interface {
 	// CreateFuturePartitions Create new partitions ahead of time
-	CreateFuturePartitions(ctx context.Context, tableConfig Table, ahead uint) error
+	CreateFuturePartitions(ctx context.Context, tableConfig Table) error
 
 	// DropOldPartitions Drop old partitions based on retention policy
 	DropOldPartitions(ctx context.Context) error

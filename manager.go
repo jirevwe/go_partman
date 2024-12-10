@@ -515,8 +515,7 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 	for _, p := range unManagedPartitions {
 		parts := strings.Split(p.TableName, "_")
 		if len(parts) != 3 {
-			m.logger.Warn("skipping partition with unexpected format",
-				"partition", p.TableName)
+			m.logger.Warn("skipping partition with unexpected format", "partition", p.TableName)
 			continue
 		}
 
@@ -530,7 +529,8 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 	for key, partition := range partitionGroups {
 		parts := strings.Split(key, "_")
 		if len(parts) != 2 {
-			continue
+			m.logger.Error("invalid partition name format")
+			return fmt.Errorf("invalid partition name format: %s", key)
 		}
 
 		tableName := parts[0]
@@ -561,7 +561,20 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 			continue
 		}
 
-		m.logger.Info("[INFO]", "partition_by:", partitionBy)
+		err = m.checkTableColumnsExist(ctx, Table{
+			Name:              tableName,
+			Schema:            m.config.SchemaName,
+			TenantId:          tenantID,
+			TenantIdColumn:    tc.TenantIdColumn,
+			PartitionBy:       partitionBy,
+			PartitionType:     tc.PartitionType,
+			PartitionInterval: tc.PartitionInterval,
+			PartitionCount:    tc.PartitionCount,
+			RetentionPeriod:   tc.RetentionPeriod,
+		})
+		if err != nil {
+			return err
+		}
 
 		// Insert into partition management table
 		res, err := m.db.ExecContext(ctx, upsertSQL,
@@ -581,7 +594,7 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 				"table", tableName,
 				"tenant", tenantID,
 				"error", err)
-			continue
+			return err
 		}
 
 		rowsAffected, err := res.RowsAffected()
@@ -590,7 +603,7 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 				"table", tableName,
 				"tenant", tenantID,
 				"error", err)
-			continue
+			return err
 		}
 
 		if rowsAffected > 0 {

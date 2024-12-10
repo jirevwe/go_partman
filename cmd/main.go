@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
+	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/endpoint_fix?sslmode=disable")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -64,7 +64,8 @@ func main() {
 		SchemaName: "convoy",
 	}
 
-	manager, err := partman.NewAndStart(db, config, slog.New(slog.NewTextHandler(os.Stdout, nil)), partman.NewRealClock())
+	clock := partman.NewSimulatedClock(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC))
+	manager, err := partman.NewAndStart(db, config, slog.New(slog.NewTextHandler(os.Stdout, nil)), clock)
 	if err != nil {
 		log.Fatal(err)
 	}

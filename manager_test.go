@@ -782,6 +782,355 @@ func TestManager(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, exists)
 	})
+
+	t.Run("ImportExistingPartitions", func(t *testing.T) {
+		t.Run("Successfully import existing partitions", func(t *testing.T) {
+			db, pool := setupTestDB(t)
+			defer cleanupTestDB(t, db, pool)
+
+			ctx := context.Background()
+
+			// Create test table with tenant support
+			_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+			require.NoError(t, err)
+			defer dropTestTable(t, ctx, db)
+
+			// Create some existing partitions manually
+			partitions := []string{
+				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`,
+				`CREATE TABLE test.sample_tenant1_20240102 PARTITION OF test.sample FOR VALUES FROM ('tenant1', '2024-01-02') TO ('tenant1', '2024-01-03')`,
+				`CREATE TABLE test.sample_tenant2_20240101 PARTITION OF test.sample FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
+			}
+
+			for _, partition := range partitions {
+				_, err = db.ExecContext(ctx, partition)
+				require.NoError(t, err)
+			}
+
+			// Initialize manager
+			logger := slog.Default()
+			config := &Config{
+				SchemaName: "test",
+				SampleRate: time.Second,
+			}
+			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+			manager, err := NewAndStart(db, config, logger, clock)
+			require.NoError(t, err)
+
+			// Import existing partitions
+			err = manager.ImportExistingPartitions(ctx, Table{
+				TenantIdColumn:    "project_id",
+				PartitionBy:       "created_at",
+				PartitionType:     TypeRange,
+				PartitionInterval: OneDay,
+				PartitionCount:    10,
+				RetentionPeriod:   OneMonth,
+			})
+			require.NoError(t, err)
+
+			// Verify partitions were imported correctly
+			var count int
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			require.NoError(t, err)
+			require.Equal(t, 2, count) // Should have 2 entries (one for each tenant)
+
+			// Verify specific tenant entries
+			var exists bool
+			err = db.QueryRowContext(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM partman.partition_management 
+					WHERE tenant_id = 'tenant1' AND partition_interval = '24h0m0s'
+				)`).Scan(&exists)
+			require.NoError(t, err)
+			require.True(t, exists)
+
+			err = db.QueryRowContext(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM partman.partition_management
+					WHERE tenant_id = 'tenant2' AND partition_interval = '24h0m0s'
+				)`).Scan(&exists)
+			require.NoError(t, err)
+			require.True(t, exists)
+		})
+
+		t.Run("Import with invalid partition format", func(t *testing.T) {
+			db, pool := setupTestDB(t)
+			defer cleanupTestDB(t, db, pool)
+
+			ctx := context.Background()
+
+			// Create test table with tenant support
+			_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+			require.NoError(t, err)
+			defer dropTestTable(t, ctx, db)
+
+			// Create an invalid partition (wrong naming format)
+			_, err = db.ExecContext(ctx, `
+				CREATE TABLE test.sample_invalid_format PARTITION OF test.sample 
+				FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`)
+			require.NoError(t, err)
+
+			// Initialize manager
+			logger := slog.Default()
+			config := &Config{
+				SchemaName: "test",
+				SampleRate: time.Second,
+			}
+			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+			manager, err := NewAndStart(db, config, logger, clock)
+			require.NoError(t, err)
+
+			// Import existing partitions
+			err = manager.ImportExistingPartitions(ctx, Table{
+				TenantIdColumn:    "project_id",
+				PartitionBy:       "created_at",
+				PartitionType:     TypeRange,
+				PartitionInterval: OneDay,
+				PartitionCount:    10,
+				RetentionPeriod:   OneMonth,
+			})
+			require.NoError(t, err)
+
+			// Verify no partitions were imported
+			var count int
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			require.NoError(t, err)
+			require.Equal(t, 0, count)
+		})
+
+		t.Run("Import with non-existent partition column", func(t *testing.T) {
+			db, pool := setupTestDB(t)
+			defer cleanupTestDB(t, db, pool)
+
+			ctx := context.Background()
+
+			// Create test table with tenant support
+			_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+			require.NoError(t, err)
+			defer dropTestTable(t, ctx, db)
+
+			// Create a valid partition
+			_, err = db.ExecContext(ctx, `
+				CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample 
+				FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`)
+			require.NoError(t, err)
+
+			// Initialize manager
+			logger := slog.Default()
+			config := &Config{
+				SchemaName: "test",
+				SampleRate: time.Second,
+			}
+			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+			manager, err := NewAndStart(db, config, logger, clock)
+			require.NoError(t, err)
+
+			// Try to import with non-existent partition column
+			err = manager.ImportExistingPartitions(ctx, Table{
+				TenantIdColumn:    "non_existent_column",
+				PartitionBy:       "created_at",
+				PartitionType:     TypeRange,
+				PartitionInterval: OneDay,
+				PartitionCount:    10,
+				RetentionPeriod:   OneMonth,
+			})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "table sample does not have a tenant id column")
+		})
+
+		t.Run("Import partitions with multiple date formats", func(t *testing.T) {
+			db, pool := setupTestDB(t)
+			defer cleanupTestDB(t, db, pool)
+
+			ctx := context.Background()
+
+			// Create test table with tenant support
+			_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+			require.NoError(t, err)
+			defer dropTestTable(t, ctx, db)
+
+			// Create partitions with different date formats
+			partitions := []string{
+				// Standard format
+				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample 
+				 FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`,
+				// Different month and day
+				`CREATE TABLE test.sample_tenant1_20241231 PARTITION OF test.sample 
+				 FOR VALUES FROM ('tenant1', '2024-12-31') TO ('tenant1', '2025-01-01')`,
+				// Another tenant
+				`CREATE TABLE test.sample_tenant2_20240101 PARTITION OF test.sample 
+				 FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
+			}
+
+			for _, partition := range partitions {
+				_, err = db.ExecContext(ctx, partition)
+				require.NoError(t, err)
+			}
+
+			logger := slog.Default()
+			config := &Config{
+				SchemaName: "test",
+				SampleRate: time.Second,
+			}
+			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+			manager, err := NewAndStart(db, config, logger, clock)
+			require.NoError(t, err)
+
+			err = manager.ImportExistingPartitions(ctx, Table{
+				TenantIdColumn:    "project_id",
+				PartitionBy:       "created_at",
+				PartitionType:     TypeRange,
+				PartitionInterval: OneDay,
+				PartitionCount:    10,
+				RetentionPeriod:   OneMonth,
+			})
+			require.NoError(t, err)
+
+			// Verify all partitions were imported
+			var count int
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			require.NoError(t, err)
+			require.Equal(t, 2, count) // Should have 2 entries (one for each tenant)
+
+			// Verify partition dates were correctly parsed
+			var exists bool
+			err = db.QueryRowContext(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM pg_tables 
+					WHERE tablename = 'sample_tenant1_20241231' 
+					AND schemaname = 'test'
+				)`).Scan(&exists)
+			require.NoError(t, err)
+			require.True(t, exists)
+		})
+
+		t.Run("Import partitions with existing management entries", func(t *testing.T) {
+			db, pool := setupTestDB(t)
+			defer cleanupTestDB(t, db, pool)
+
+			ctx := context.Background()
+
+			// Create test table with tenant support
+			_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+			require.NoError(t, err)
+			defer dropTestTable(t, ctx, db)
+
+			// Create a partition
+			_, err = db.ExecContext(ctx, `
+				CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample 
+				FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`)
+			require.NoError(t, err)
+
+			logger := slog.Default()
+			config := &Config{
+				SchemaName: "test",
+				SampleRate: time.Second,
+			}
+			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+			manager, err := NewAndStart(db, config, logger, clock)
+			require.NoError(t, err)
+
+			// Create an existing management entry
+			_, err = db.ExecContext(ctx, `
+				INSERT INTO partman.partition_management (
+					id, table_name, schema_name, tenant_id, tenant_column,
+					partition_by, partition_type, partition_interval,
+					retention_period, partition_count
+				) VALUES (
+					$1, 'sample', 'test', 'tenant1', 'project_id',
+					'created_at', 'range', '24h', '720h', 10
+				)`, ulid.Make().String())
+			require.NoError(t, err)
+
+			// Try to import partitions
+			err = manager.ImportExistingPartitions(ctx, Table{
+				TenantIdColumn:    "project_id",
+				PartitionBy:       "created_at",
+				PartitionType:     TypeRange,
+				PartitionInterval: OneDay,
+				PartitionCount:    10,
+				RetentionPeriod:   OneMonth,
+			})
+			require.NoError(t, err)
+
+			// Verify only one management entry exists (no duplicates)
+			var count int
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			require.NoError(t, err)
+			require.Equal(t, 1, count)
+		})
+
+		t.Run("Import partitions with mixed valid and invalid names", func(t *testing.T) {
+			db, pool := setupTestDB(t)
+			defer cleanupTestDB(t, db, pool)
+
+			ctx := context.Background()
+
+			// Create test table with tenant support
+			_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+			require.NoError(t, err)
+			defer dropTestTable(t, ctx, db)
+
+			// Create mixed partitions
+			partitions := []string{
+				// Valid partition
+				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample 
+				 FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`,
+				// Invalid format but valid partition
+				`CREATE TABLE test.sample_invalid_tenant1 PARTITION OF test.sample 
+				 FOR VALUES FROM ('tenant1', '2024-01-02') TO ('tenant1', '2024-01-03')`,
+				// Another valid partition
+				`CREATE TABLE test.sample_tenant2_20240101 PARTITION OF test.sample 
+				 FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
+			}
+
+			for _, partition := range partitions {
+				_, err = db.ExecContext(ctx, partition)
+				require.NoError(t, err)
+			}
+
+			logger := slog.Default()
+			config := &Config{
+				SchemaName: "test",
+				SampleRate: time.Second,
+			}
+			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+			manager, err := NewAndStart(db, config, logger, clock)
+			require.NoError(t, err)
+
+			err = manager.ImportExistingPartitions(ctx, Table{
+				TenantIdColumn:    "project_id",
+				PartitionBy:       "created_at",
+				PartitionType:     TypeRange,
+				PartitionInterval: OneDay,
+				PartitionCount:    10,
+				RetentionPeriod:   OneMonth,
+			})
+			require.NoError(t, err)
+
+			// Verify only valid partitions were imported
+			var count int
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			require.NoError(t, err)
+			require.Equal(t, 2, count) // Should only import the valid partitions
+
+			// Verify specific valid partitions were imported
+			var exists bool
+			err = db.QueryRowContext(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM partman.partition_management 
+					WHERE tenant_id IN ('tenant1', 'tenant2')
+				)`).Scan(&exists)
+			require.NoError(t, err)
+			require.True(t, exists)
+		})
+	})
 }
 
 func TestNewManager(t *testing.T) {

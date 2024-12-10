@@ -483,3 +483,123 @@ func (m *Manager) AddManagedTable(tc Table) error {
 
 	return nil
 }
+
+// ImportExistingPartitions scans the database for existing partitions and adds them to the partition management table
+func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error {
+	// Query to get all tables that look like partitions but aren't yet managed
+	const findUnmanagedPartitionsQuery = `
+	WITH managed_tables AS (
+		SELECT table_name, tenant_id 
+		FROM partman.partition_management
+	)
+	SELECT t.tablename, t.schemaname
+	FROM pg_tables t
+	LEFT JOIN managed_tables mt ON 
+		split_part(t.tablename, '_', 1) = mt.table_name AND
+		split_part(t.tablename, '_', 2) = mt.tenant_id
+	WHERE t.tablename ~ '_[a-z0-9]+_\d{8}$'
+	AND mt.table_name IS NULL;`
+
+	type unManagedPartition struct {
+		TableName  string `db:"tablename"`
+		SchemaName string `db:"schemaname"`
+	}
+
+	var unManagedPartitions []unManagedPartition
+	if err := m.db.SelectContext(ctx, &unManagedPartitions, findUnmanagedPartitionsQuery); err != nil {
+		return fmt.Errorf("failed to query unmanaged partitions: %w", err)
+	}
+
+	// Group partitions by base table and tenant
+	partitionGroups := make(map[string][]string)
+	for _, p := range unManagedPartitions {
+		parts := strings.Split(p.TableName, "_")
+		if len(parts) != 3 {
+			m.logger.Warn("skipping partition with unexpected format",
+				"partition", p.TableName)
+			continue
+		}
+
+		baseTable := parts[0]
+		tenantID := parts[1]
+		key := fmt.Sprintf("%s_%s", baseTable, tenantID)
+		partitionGroups[key] = append(partitionGroups[key], p.TableName)
+	}
+
+	// For each group, create a management entry
+	for key, partition := range partitionGroups {
+		parts := strings.Split(key, "_")
+		if len(parts) != 2 {
+			continue
+		}
+
+		tableName := parts[0]
+		tenantID := parts[1]
+
+		// Get partition interval and retention period from existing table
+		const getPartitionInfoQuery = `
+		SELECT a.attname as partition_by
+		FROM pg_attribute a
+		JOIN pg_class c ON c.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1 
+		AND c.relname = $2 
+		AND a.attnum > 0 
+		AND NOT a.attisdropped
+		AND EXISTS (
+			SELECT 1 FROM pg_partitioned_table pt 
+			WHERE pt.partrelid = c.oid 
+			AND pt.partattrs[1] = a.attnum
+		);`
+
+		var partitionBy string
+		err := m.db.GetContext(ctx, &partitionBy, getPartitionInfoQuery, m.config.SchemaName, tableName)
+		if err != nil {
+			m.logger.Error("failed to get partition info",
+				"table", tableName,
+				"error", err)
+			continue
+		}
+
+		m.logger.Info("[INFO]", "partition_by:", partitionBy)
+
+		// Insert into partition management table
+		res, err := m.db.ExecContext(ctx, upsertSQL,
+			ulid.Make().String(),
+			tableName,
+			m.config.SchemaName,
+			tenantID,
+			tc.TenantIdColumn,
+			partitionBy,
+			tc.PartitionType,
+			tc.PartitionCount,
+			tc.PartitionInterval,
+			tc.RetentionPeriod,
+		)
+		if err != nil {
+			m.logger.Error("failed to insert management entry",
+				"table", tableName,
+				"tenant", tenantID,
+				"error", err)
+			continue
+		}
+
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			m.logger.Error("failed to get rows affected",
+				"table", tableName,
+				"tenant", tenantID,
+				"error", err)
+			continue
+		}
+
+		if rowsAffected > 0 {
+			m.logger.Info("imported existing partitioned table",
+				"table", tableName,
+				"tenant", tenantID,
+				"partition_count", len(partition))
+		}
+	}
+
+	return nil
+}

@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/endpoint_fix?sslmode=disable")
+	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/party?sslmode=disable")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -29,37 +29,6 @@ func main() {
 	db := sqlx.NewDb(sqlDB, "pgx")
 
 	config := &partman.Config{
-		Tables: []partman.Table{
-			// {
-			// 	Name:              "samples",
-			// 	TenantId:          "project_id_asd",
-			// 	TenantIdColumn:    "project_id",
-			// 	PartitionType:     partman.TypeRange,
-			// 	PartitionBy:       "created_at",
-			// 	PartitionInterval: partman.OneDay,
-			// 	RetentionPeriod:   partman.OneMonth,
-			// },
-			// {
-			// 	Name:              "samples",
-			// 	TenantId:          "project_id_124",
-			// 	PartitionType:     partman.TypeRange,
-			// 	PartitionBy:       "created_at",
-			// 	TenantIdColumn:    "project_id",
-			// 	PartitionInterval: partman.OneDay,
-			// 	RetentionPeriod:   partman.OneMonth * 2,
-			// },
-			{
-				Name:              "events",
-				Schema:            "convoy",
-				TenantId:          "01J9V16CEJP040Z14489BV8AW3",
-				TenantIdColumn:    "project_id",
-				PartitionBy:       "created_at",
-				PartitionType:     partman.TypeRange,
-				RetentionPeriod:   partman.OneMonth,
-				PartitionInterval: partman.OneDay,
-				PartitionCount:    10,
-			},
-		},
 		SampleRate: 30 * time.Second,
 		SchemaName: "convoy",
 	}
@@ -71,14 +40,15 @@ func main() {
 	}
 
 	// Import existing partitions
-	if err = manager.ImportExistingPartitions(context.Background(), partman.Table{
+	err = manager.ImportExistingPartitions(context.Background(), partman.Table{
 		TenantIdColumn:    "project_id",
 		PartitionBy:       "created_at",
 		PartitionType:     partman.TypeRange,
 		PartitionInterval: partman.OneDay,
 		PartitionCount:    10,
 		RetentionPeriod:   partman.OneMonth,
-	}); err != nil {
+	})
+	if err != nil {
 		log.Fatal(err)
 	}
 
@@ -86,5 +56,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	time.Sleep(2 * time.Minute)
+	time.Sleep(30 * time.Second)
 }

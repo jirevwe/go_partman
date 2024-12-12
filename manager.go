@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
@@ -360,7 +359,7 @@ func (m *Manager) generateRangePartitionSQL(name string, tc Table, b Bounds) str
 }
 
 func (m *Manager) checkTableColumnsExist(ctx context.Context, tc Table) error {
-	if len(tc.TenantIdColumn) > 0 {
+	if len(tc.TenantIdColumn) > 0 && len(tc.TenantId) > 0 {
 		var exists bool
 		err := m.db.QueryRowxContext(ctx, checkColumnExists, m.config.SchemaName, tc.Name, tc.TenantIdColumn).Scan(&exists)
 		if err != nil {
@@ -385,8 +384,9 @@ func (m *Manager) checkTableColumnsExist(ctx context.Context, tc Table) error {
 	return nil
 }
 
-func (m *Manager) generatePartitionName(tc Table, bounds Bounds) string {
-	datePart := strings.ReplaceAll(bounds.From.Format(time.DateOnly), "-", "")
+func (m *Manager) generatePartitionName(tc Table, b Bounds) string {
+	datePart := b.From.Format(DateNoHyphens)
+
 	if len(tc.TenantId) > 0 {
 		return fmt.Sprintf("%s_%s_%s", tc.Name, tc.TenantId, datePart)
 	}
@@ -488,90 +488,70 @@ func (m *Manager) AddManagedTable(tc Table) error {
 func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error {
 	// Query to get all tables that look like partitions but aren't yet managed
 	const findUnmanagedPartitionsQuery = `
-	WITH managed_tables AS (
-		SELECT table_name, tenant_id 
-		FROM partman.partition_management
-	)
-	SELECT t.tablename, t.schemaname
-	FROM pg_tables t
-	LEFT JOIN managed_tables mt ON 
-		split_part(t.tablename, '_', 1) = mt.table_name AND
-		split_part(t.tablename, '_', 2) = mt.tenant_id
-	WHERE t.tablename ~ '_[a-z0-9]+_\d{8}$'
-	AND mt.table_name IS NULL;`
+	with partition_info as (
+		SELECT
+			c.relname AS tablename,
+			n.nspname AS schemaname,
+			split_part(p.partrelid::regclass::TEXT, '.', 2) AS parentname
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_inherits i ON i.inhrelid = c.oid
+		JOIN pg_partitioned_table p ON p.partrelid = i.inhparent
+		WHERE n.nspname = $1
+		AND c.relname ~ '.*_\d{8}$'
+	), extract_parts as (
+		select
+			*,
+			split_part(tablename, parentname||'_', 2) as tenantid
+	  from partition_info
+	) select
+	      parentname,
+	      schemaname,
+	      case when (select pg_catalog.array_length(regexp_matches(tenantid, '_\d{8}$'), 1)) > 0 then
+	          regexp_replace(tenantid, '_\d{8}$', '')
+	          else ''
+		  end as tenantid
+	  from extract_parts;`
 
 	type unManagedPartition struct {
-		TableName  string `db:"tablename"`
+		TenantId   string `db:"tenantid"`
 		SchemaName string `db:"schemaname"`
+		TableName  string `db:"parentname"`
 	}
 
 	var unManagedPartitions []unManagedPartition
-	if err := m.db.SelectContext(ctx, &unManagedPartitions, findUnmanagedPartitionsQuery); err != nil {
+	if err := m.db.SelectContext(ctx, &unManagedPartitions, findUnmanagedPartitionsQuery, m.config.SchemaName); err != nil {
 		return fmt.Errorf("failed to query unmanaged partitions: %w", err)
 	}
 
 	// Group partitions by base table and tenant
-	partitionGroups := make(map[string][]string)
+	partitionGroups := make(map[string][]unManagedPartition)
 	for _, p := range unManagedPartitions {
-		parts := strings.Split(p.TableName, "_")
-		if len(parts) != 3 {
-			m.logger.Warn("skipping partition with unexpected format", "partition", p.TableName)
-			continue
-		}
+		var key string
 
-		baseTable := parts[0]
-		tenantID := parts[1]
-		key := fmt.Sprintf("%s_%s", baseTable, tenantID)
-		partitionGroups[key] = append(partitionGroups[key], p.TableName)
+		if p.TenantId != "" {
+			key = fmt.Sprintf("%s_%s", p.TableName, p.TenantId)
+		}
+		partitionGroups[key] = append(partitionGroups[key], p)
 	}
 
 	// For each group, create a management entry
-	for key, partition := range partitionGroups {
-		parts := strings.Split(key, "_")
-		if len(parts) != 2 {
-			m.logger.Error("invalid partition name format")
-			return fmt.Errorf("invalid partition name format: %s", key)
-		}
+	for _, partitions := range partitionGroups {
+		p := partitions[0]
 
-		tableName := parts[0]
-		tenantID := parts[1]
-
-		// Get partition interval and retention period from existing table
-		const getPartitionInfoQuery = `
-		SELECT a.attname as partition_by
-		FROM pg_attribute a
-		JOIN pg_class c ON c.oid = a.attrelid
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE n.nspname = $1 
-		AND c.relname = $2 
-		AND a.attnum > 0 
-		AND NOT a.attisdropped
-		AND EXISTS (
-			SELECT 1 FROM pg_partitioned_table pt 
-			WHERE pt.partrelid = c.oid 
-			AND pt.partattrs[1] = a.attnum
-		);`
-
-		var partitionBy string
-		err := m.db.GetContext(ctx, &partitionBy, getPartitionInfoQuery, m.config.SchemaName, tableName)
-		if err != nil {
-			m.logger.Error("failed to get partition info",
-				"table", tableName,
-				"error", err)
-			continue
-		}
-
-		err = m.checkTableColumnsExist(ctx, Table{
-			Name:              tableName,
+		tableConfig := Table{
+			Name:              p.TableName,
 			Schema:            m.config.SchemaName,
-			TenantId:          tenantID,
+			TenantId:          p.TenantId,
 			TenantIdColumn:    tc.TenantIdColumn,
-			PartitionBy:       partitionBy,
+			PartitionBy:       tc.PartitionBy,
 			PartitionType:     tc.PartitionType,
 			PartitionInterval: tc.PartitionInterval,
 			PartitionCount:    tc.PartitionCount,
 			RetentionPeriod:   tc.RetentionPeriod,
-		})
+		}
+
+		err := m.checkTableColumnsExist(ctx, tableConfig)
 		if err != nil {
 			return err
 		}
@@ -579,20 +559,20 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 		// Insert into partition management table
 		res, err := m.db.ExecContext(ctx, upsertSQL,
 			ulid.Make().String(),
-			tableName,
-			m.config.SchemaName,
-			tenantID,
-			tc.TenantIdColumn,
-			partitionBy,
-			tc.PartitionType,
-			tc.PartitionCount,
-			tc.PartitionInterval,
-			tc.RetentionPeriod,
+			tableConfig.Name,
+			tableConfig.Schema,
+			tableConfig.TenantId,
+			tableConfig.TenantIdColumn,
+			tableConfig.PartitionBy,
+			tableConfig.PartitionType,
+			tableConfig.PartitionCount,
+			tableConfig.PartitionInterval,
+			tableConfig.RetentionPeriod,
 		)
 		if err != nil {
 			m.logger.Error("failed to insert management entry",
-				"table", tableName,
-				"tenant", tenantID,
+				"table", p.TableName,
+				"tenant", p.TenantId,
 				"error", err)
 			return err
 		}
@@ -600,17 +580,17 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 		rowsAffected, err := res.RowsAffected()
 		if err != nil {
 			m.logger.Error("failed to get rows affected",
-				"table", tableName,
-				"tenant", tenantID,
+				"table", p.TableName,
+				"tenant", p.TenantId,
 				"error", err)
 			return err
 		}
 
 		if rowsAffected > 0 {
 			m.logger.Info("imported existing partitioned table",
-				"table", tableName,
-				"tenant", tenantID,
-				"partition_count", len(partition))
+				"table", p.TableName,
+				"tenant", p.TenantId,
+				"partition_count", len(partitions))
 		}
 	}
 

@@ -250,3 +250,24 @@ func (tc *Table) Validate() error {
 
 	return nil
 }
+
+type StringArray []string
+
+func (a *StringArray) Scan(src interface{}) error {
+	if src == nil {
+		return nil
+	}
+
+	var array []string
+
+	switch v := src.(type) {
+	case string:
+		array = append(array, v)
+	case []string:
+		array = v
+	}
+
+	*a = array
+
+	return nil
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -133,7 +134,7 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 			ulid.Make().String(),
 			table.Name,
 			config.SchemaName,
-			table.TenantId,
+			strings.ToLower(table.TenantId),
 			table.TenantIdColumn,
 			table.PartitionBy,
 			table.PartitionType,
@@ -455,7 +456,7 @@ func (m *Manager) AddManagedTable(tc Table) error {
 		ulid.Make().String(),
 		tc.Name,
 		m.config.SchemaName,
-		tc.TenantId,
+		strings.ToLower(tc.TenantId),
 		tc.TenantIdColumn,
 		tc.PartitionBy,
 		tc.PartitionType,
@@ -500,10 +501,7 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 		WHERE n.nspname = $1
 		AND c.relname ~ '.*_\d{8}$'
 	), extract_parts as (
-		select
-			*,
-			split_part(tablename, parentname||'_', 2) as tenantid
-	  from partition_info
+		select *, split_part(tablename, parentname||'_', 2) as tenantid from partition_info
 	) select
 	      parentname,
 	      schemaname,
@@ -561,7 +559,7 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 			ulid.Make().String(),
 			tableConfig.Name,
 			tableConfig.Schema,
-			tableConfig.TenantId,
+			strings.ToLower(tableConfig.TenantId),
 			tableConfig.TenantIdColumn,
 			tableConfig.PartitionBy,
 			tableConfig.PartitionType,

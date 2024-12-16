@@ -474,13 +474,16 @@ func (m *Manager) AddManagedTable(tc Table) error {
 	}
 
 	if rowsAffected < int64(1) {
-		return fmt.Errorf("failed to upsert new table config for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
+		return fmt.Errorf("failed to upsert new table config for %s (tenant id: %s)", tc.Name, tc.TenantId)
 	}
 
 	// Create future partitions for the new table
 	if err = m.CreateFuturePartitions(ctx, tc); err != nil {
 		return fmt.Errorf("failed to create future partitions for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
 	}
+
+	// Update the manager's config
+	m.config.Tables = append(m.config.Tables, tc)
 
 	return nil
 }
@@ -532,6 +535,9 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 		}
 		partitionGroups[key] = append(partitionGroups[key], p)
 	}
+
+	// Keep track of newly added tables
+	var addedTables []Table
 
 	// For each group, create a management entry
 	for _, partitions := range partitionGroups {
@@ -589,8 +595,14 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 				"table", p.TableName,
 				"tenant", p.TenantId,
 				"partition_count", len(partitions))
+
+			// Add to our list of new tables
+			addedTables = append(addedTables, tableConfig)
 		}
 	}
+
+	// Update the manager's config with all new tables
+	m.config.Tables = append(m.config.Tables, addedTables...)
 
 	return nil
 }

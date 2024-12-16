@@ -1508,3 +1508,110 @@ func TestNewManager(t *testing.T) {
 		require.False(t, exists)
 	})
 }
+
+func TestManagerConfigUpdate(t *testing.T) {
+	t.Run("AddManagedTable", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx := context.Background()
+
+		// Create test table with tenant support
+		_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+		require.NoError(t, err)
+		defer dropTestTable(t, ctx, db)
+
+		// Initial config with one table
+		initialTable := Table{
+			Name:              "sample",
+			TenantId:          "tenant1",
+			TenantIdColumn:    "project_id",
+			PartitionType:     TypeRange,
+			PartitionBy:       "created_at",
+			PartitionInterval: OneDay,
+			RetentionPeriod:   OneWeek,
+			PartitionCount:    2,
+		}
+
+		config := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables:     []Table{initialTable},
+		}
+
+		// Create manager
+		manager, err := NewAndStart(db, config, slog.Default(), NewSimulatedClock(time.Now()))
+		require.NoError(t, err)
+
+		// Add a new table
+		newTable := Table{
+			Name:              "sample",
+			TenantId:          "tenant2",
+			TenantIdColumn:    "project_id",
+			PartitionType:     TypeRange,
+			PartitionBy:       "created_at",
+			PartitionInterval: OneDay,
+			RetentionPeriod:   OneWeek,
+			PartitionCount:    2,
+		}
+
+		err = manager.AddManagedTable(newTable)
+		require.NoError(t, err)
+
+		// Verify config was updated
+		require.Equal(t, 2, len(manager.config.Tables))
+		require.Contains(t, manager.config.Tables, newTable)
+	})
+
+	t.Run("ImportExistingPartitions", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx := context.Background()
+
+		// Create test table
+		createTestTable(t, ctx, db)
+		defer dropTestTable(t, ctx, db)
+
+		// Initial config with empty tables
+		config := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+		}
+
+		// Create manager
+		manager, err := NewAndStart(db, config, slog.Default(), NewSimulatedClock(time.Now()))
+		require.NoError(t, err)
+
+		// Create some existing partitions manually
+		partitions := []string{
+			`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample FOR VALUES FROM ('2024-01-01') TO ('2024-01-02')`,
+			`CREATE TABLE test.sample_tenant1_20240102 PARTITION OF test.sample FOR VALUES FROM ('2024-01-02') TO ('2024-01-03')`,
+		}
+
+		for _, partition := range partitions {
+			_, err = db.ExecContext(ctx, partition)
+			require.NoError(t, err)
+		}
+
+		// Import existing partitions
+		err = manager.ImportExistingPartitions(ctx, Table{
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: OneDay,
+			RetentionPeriod:   OneWeek,
+			PartitionCount:    2,
+		})
+		require.NoError(t, err)
+
+		// Verify config includes imported tables
+		require.Equal(t, 1, len(manager.config.Tables))
+
+		// Verify the imported table has correct configuration
+		importedTable := manager.config.Tables[0]
+		require.Equal(t, "sample", importedTable.Name)
+		require.Equal(t, TypeRange, importedTable.PartitionType)
+		require.Equal(t, "created_at", importedTable.PartitionBy)
+		require.Equal(t, OneDay, importedTable.PartitionInterval)
+	})
+}

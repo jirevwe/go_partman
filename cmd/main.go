@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/party?sslmode=disable")
+	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
 	if err != nil {
 		log.Fatal(err)
 	}

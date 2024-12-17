@@ -154,31 +154,31 @@ type D struct {
 
 type Table struct {
 	// Name of the partitioned table
-	Name string
+	Name string `db:"table_name"`
 
 	// Schema of the partitioned table
-	Schema string
+	Schema string `db:"schema_name"`
 
 	// TenantId Tenant ID column value (e.g., 01J2V010NV1259CYWQEYQC8F35)
-	TenantId string
+	TenantId string `db:"tenant_id"`
 
 	// TenantIdColumn Tenant ID column to partition by (e.g., tenant_id)
-	TenantIdColumn string
+	TenantIdColumn string `db:"tenant_column"`
 
 	// PartitionBy Timestamp column to partition by (e.g., created_at)
-	PartitionBy string
+	PartitionBy string `db:"partition_by"`
 
 	// PartitionType Postgres partition type
-	PartitionType PartitionerType // "range", "list", or "hash"
+	PartitionType PartitionerType `db:"partition_type"` // "range", "list", or "hash"
 
 	// PartitionInterval For range partitions (e.g., "1 month", "1 day")
-	PartitionInterval TimeDuration
+	PartitionInterval TimeDuration `db:"partition_interval"`
 
 	// PartitionCount is the number of partitions a table will have; defaults to 10
-	PartitionCount uint
+	PartitionCount uint `db:"partition_count"`
 
 	// RetentionPeriod is how long after which partitions will be dropped (e.g., "1 month", "1 day")
-	RetentionPeriod TimeDuration
+	RetentionPeriod TimeDuration `db:"retention_period"`
 }
 
 type Config struct {

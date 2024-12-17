@@ -11,7 +11,6 @@ A Go native implementation of PostgreSQL table partitioning management, inspired
 - Pre-creation of future partitions
 - Multi-tenant support with tenant-specific partitioning
 - Extensible pre-drop hooks for custom cleanup logic
-- Simulated clock support for testing
 
 ## Installation
 
@@ -24,44 +23,55 @@ go get github.com/jirevwe/go_partman
 ### Basic Setup
 
 ```go
+package main
+
 import (
-    "github.com/jirevwe/go_partman"
-    "github.com/jmoiron/sqlx"
-    "log/slog"
+	"context"
+	"fmt"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/jirevwe/go_partman"
+	"github.com/jmoiron/sqlx"
+
+	"log"
+	"log/slog"
+	"os"
+
+	"time"
 )
 
-// Configure your partitioning strategy
-config := partman.Config{
-    SchemaName: "public",
-    Tables: []partman.TableConfig{
-        {
-            Name:              "events",
-            PartitionType:     partman.TypeRange,
-            PartitionBy:       "created_at",
-            PartitionInterval: partman.OneDay,    // Daily partitions
-            PartitionCount:    7,                   // Create 7 days ahead
-            RetentionPeriod:   partman.OneMonth,  // Keep 1 month of data
-        },
-    },
+func main() {
+	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), pgxCfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	db := sqlx.NewDb(sqlDB, "pgx")
+
+	config := &partman.Config{
+		SampleRate: 30 * time.Second,
+		SchemaName: "convoy",
+	}
+
+	clock := partman.NewRealClock()
+	manager, err := partman.NewAndStart(db, config, slog.New(slog.NewTextHandler(os.Stdout, nil)), clock)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err = manager.Start(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+
+	time.Sleep(30 * time.Second)
 }
 
-// Create the manager
-db := sqlx.MustConnect("postgres", "postgres://localhost:5432/postgres?sslmode=disable")
-logger := slog.Default()
-manager, err := partman.NewManager(db, config, logger, partman.NewRealClock())
-if err != nil {
-    log.Fatal(err)
-}
-
-// Initialize the partition manager
-if err = manager.Initialize(context.Background(), config); err != nil {
-    log.Fatal(err)
-}
-
-// Start the partition manager (runs a background goroutine)
-if err = manager.Start(context.Background()); err != nil {
-    log.Fatal(err)
-}
 ```
 
 ### Multi-tenant Setup
@@ -102,6 +112,25 @@ newTableConfig := partman.TableConfig{
 
 // Add the new managed table
 if err := manager.AddManagedTable(newTableConfig); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Import Exsiting Partitions
+
+You can add a new managed table to the partition manager using the `AddManagedTable` method:
+
+```go
+err = manager.ImportExistingPartitions(context.Background(), partman.Table{
+    TenantIdColumn:    "project_id",
+    PartitionBy:       "created_at",
+    PartitionType:     partman.TypeRange,
+    PartitionInterval: partman.
+    OneDay,
+    PartitionCount:    10,
+    RetentionPeriod:   partman.OneMonth,
+})
+if err != nil {
     log.Fatal(err)
 }
 ```

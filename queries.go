@@ -68,3 +68,16 @@ var checkColumnExists = `
 SELECT EXISTS (SELECT 1 
 FROM information_schema.columns
 WHERE table_schema=$1 AND table_name=$2 AND column_name=$3);`
+
+var getManagedTablesQuery = `
+SELECT 
+    table_name,
+    schema_name,
+    tenant_id,
+    tenant_column,
+    partition_by,
+    partition_type,
+    partition_count,
+    partition_interval,
+    retention_period
+FROM partman.partition_management;`

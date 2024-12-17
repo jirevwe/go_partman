@@ -98,6 +98,10 @@ func NewAndStart(db *sqlx.DB, config *Config, logger *slog.Logger, clock Clock) 
 	return m, nil
 }
 
+func (m *Manager) GetConfig() Config {
+	return *m.config
+}
+
 // runUpgrades runs all the migrations on the management tables while keeping them backwards compatible
 func (m *Manager) runMigrations(ctx context.Context) error {
 	migrations := []string{
@@ -121,15 +125,47 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 		return fmt.Errorf("failed to create management table: %w", err)
 	}
 
-	for _, table := range config.Tables {
+	var existingTables []Table
+	if err := m.db.SelectContext(ctx, &existingTables, getManagedTablesQuery); err != nil {
+		return fmt.Errorf("failed to load existing managed tables: %w", err)
+	}
+
+	// Merge existing tables with new config tables
+	configTables := make(map[string]Table)
+
+	// Add existing tables first
+	for _, et := range existingTables {
+		key := et.Name
+		if et.TenantId != "" {
+			key = fmt.Sprintf("%s_%s", et.Name, et.TenantId)
+		}
+		configTables[key] = et
+	}
+
+	// Add or update with new config tables
+	for _, nt := range config.Tables {
+		key := nt.Name
+		if nt.TenantId != "" {
+			key = fmt.Sprintf("%s_%s", nt.Name, nt.TenantId)
+		}
+		configTables[key] = nt
+	}
+
+	// Convert back to slice
+	mergedTables := make([]Table, 0, len(configTables))
+	for _, table := range configTables {
+		mergedTables = append(mergedTables, table)
+	}
+	m.config.Tables = mergedTables
+
+	// Validate and initialize each table
+	for _, table := range m.config.Tables {
 		err := m.checkTableColumnsExist(ctx, table)
 		if err != nil {
 			return err
 		}
-	}
 
-	// Insert or update configuration for each table
-	for _, table := range config.Tables {
+		// Insert or update configuration
 		res, err := m.db.ExecContext(ctx, upsertSQL,
 			ulid.Make().String(),
 			table.Name,

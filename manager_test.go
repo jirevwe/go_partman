@@ -3,15 +3,17 @@ package partman
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/require"
-	"log/slog"
-	"testing"
-	"time"
 )
 
 var createTestTableQuery = `
@@ -1613,5 +1615,212 @@ func TestManagerConfigUpdate(t *testing.T) {
 		require.Equal(t, TypeRange, importedTable.PartitionType)
 		require.Equal(t, "created_at", importedTable.PartitionBy)
 		require.Equal(t, OneDay, importedTable.PartitionInterval)
+	})
+}
+
+func TestManagerInitialization(t *testing.T) {
+	t.Run("loads existing managed tables", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx := context.Background()
+
+		// Create test table with tenant support
+		_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+		require.NoError(t, err)
+		defer dropTestTable(t, ctx, db)
+
+		// Insert some existing managed tables into partition_management
+		existingTables := []Table{
+			{
+				Name:              "sample",
+				Schema:            "test",
+				TenantId:          "tenant1",
+				TenantIdColumn:    "project_id",
+				PartitionBy:       "created_at",
+				PartitionType:     "range",
+				PartitionInterval: OneDay,
+				PartitionCount:    5,
+				RetentionPeriod:   OneMonth,
+			},
+			{
+				Name:              "sample",
+				Schema:            "test",
+				TenantId:          "tenant2",
+				TenantIdColumn:    "project_id",
+				PartitionBy:       "created_at",
+				PartitionType:     "range",
+				PartitionInterval: OneDay,
+				PartitionCount:    3,
+				RetentionPeriod:   OneDay,
+			},
+		}
+
+		// Create management table and insert existing configurations
+		migrations := []string{
+			createSchema,
+			createManagementTable,
+			createUniqueIndex,
+		}
+
+		for _, migration := range migrations {
+			_, err = db.ExecContext(ctx, migration)
+			require.NoError(t, err)
+		}
+
+		for _, tc := range existingTables {
+			_, err = db.ExecContext(ctx, upsertSQL,
+				ulid.Make().String(),
+				tc.Name,
+				tc.Schema,
+				strings.ToLower(tc.TenantId),
+				tc.TenantIdColumn,
+				tc.PartitionBy,
+				tc.PartitionType,
+				tc.PartitionCount,
+				tc.PartitionInterval,
+				tc.RetentionPeriod,
+			)
+			require.NoError(t, err)
+		}
+
+		// Create the manager with one table pre-configured
+		newConfig := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "sample",
+					TenantId:          "tenant3",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: OneDay,
+					RetentionPeriod:   OneWeek,
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(slog.Default()),
+			WithConfig(newConfig),
+			WithClock(NewSimulatedClock(time.Now())),
+		)
+		require.NoError(t, err)
+
+		// Verify that manager config contains both existing and new tables
+		require.Equal(t, 3, len(manager.config.Tables), "Should have 3 tables (2 existing + 1 new)")
+
+		// Helper function to find table by tenant ID
+		findTable := func(tables []Table, tenantID string) *Table {
+			for _, table := range tables {
+				if table.TenantId == tenantID {
+					return &table
+				}
+			}
+			return nil
+		}
+
+		// Verify existing tables were loaded with correct configuration
+		tenant1Table := findTable(manager.config.Tables, "tenant1")
+		require.NotNil(t, tenant1Table)
+		require.Equal(t, uint(5), tenant1Table.PartitionCount)
+		require.Equal(t, OneMonth, tenant1Table.RetentionPeriod)
+
+		tenant2Table := findTable(manager.config.Tables, "tenant2")
+		require.NotNil(t, tenant2Table)
+		require.Equal(t, uint(3), tenant2Table.PartitionCount)
+		require.Equal(t, OneDay, tenant2Table.RetentionPeriod)
+
+		// Verify new table was added
+		tenant3Table := findTable(manager.config.Tables, "tenant3")
+		require.NotNil(t, tenant3Table)
+		require.Equal(t, uint(2), tenant3Table.PartitionCount)
+		require.Equal(t, OneWeek, tenant3Table.RetentionPeriod)
+	})
+
+	t.Run("new config overrides existing table config", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx := context.Background()
+
+		// Create test table with tenant support
+		_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+		require.NoError(t, err)
+		defer dropTestTable(t, ctx, db)
+
+		// Create management table and insert existing configurations
+		migrations := []string{
+			createSchema,
+			createManagementTable,
+			createUniqueIndex,
+		}
+
+		for _, migration := range migrations {
+			_, err = db.ExecContext(ctx, migration)
+			require.NoError(t, err)
+		}
+		_, err = db.ExecContext(ctx, upsertSQL,
+			ulid.Make().String(),
+			"sample",
+			"test",
+			"tenant1",
+			"project_id",
+			"created_at",
+			"range",
+			5,
+			"24h",
+			"168h",
+		)
+		require.NoError(t, err)
+
+		// Create new manager with overlapping config
+		newConfig := &Config{
+			SchemaName: "test",
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "sample",
+					TenantId:          "tenant1", // Same tenant as existing
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: OneDay,
+					RetentionPeriod:   OneMonth, // Different retention period
+					PartitionCount:    10,       // Different partition count
+				},
+			},
+		}
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(slog.Default()),
+			WithConfig(newConfig),
+			WithClock(NewSimulatedClock(time.Now())),
+		)
+		require.NoError(t, err)
+
+		// Verify that new config overrode existing config
+		require.Equal(t, 1, len(manager.config.Tables))
+		table := manager.config.Tables[0]
+		require.Equal(t, "tenant1", table.TenantId)
+		require.Equal(t, uint(10), table.PartitionCount)
+		require.Equal(t, OneMonth, table.RetentionPeriod)
+
+		// Verify database was updated with new config
+		var dbTable struct {
+			PartitionCount  int    `db:"partition_count"`
+			RetentionPeriod string `db:"retention_period"`
+		}
+		err = db.GetContext(ctx, &dbTable,
+			"SELECT partition_count, retention_period FROM partman.partition_management WHERE tenant_id = $1",
+			"tenant1",
+		)
+		require.NoError(t, err)
+		require.Equal(t, 10, dbTable.PartitionCount)
+		require.Equal(t, "720h0m0s", dbTable.RetentionPeriod)
 	})
 }

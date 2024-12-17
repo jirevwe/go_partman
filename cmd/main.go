@@ -29,8 +29,7 @@ func main() {
 	db := sqlx.NewDb(sqlDB, "pgx")
 
 	config := &partman.Config{
-		SampleRate: 30 * time.Second,
-		SchemaName: "convoy",
+		SampleRate: time.Second,
 	}
 
 	clock := partman.NewSimulatedClock(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC))
@@ -41,6 +40,7 @@ func main() {
 
 	// Import existing partitions
 	err = manager.ImportExistingPartitions(context.Background(), partman.Table{
+		Schema:            "convoy",
 		TenantIdColumn:    "project_id",
 		PartitionBy:       "created_at",
 		PartitionType:     partman.TypeRange,

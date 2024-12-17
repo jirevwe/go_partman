@@ -172,7 +172,7 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 		res, err := m.db.ExecContext(ctx, upsertSQL,
 			ulid.Make().String(),
 			mTable.TableName,
-			config.SchemaName,
+			mTable.SchemaName,
 			mTable.TenantID,
 			mTable.TenantColumn,
 			mTable.PartitionBy,
@@ -194,6 +194,7 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 			return fmt.Errorf("failed to upsert table config for %s", table.Name)
 		}
 
+		fmt.Printf("schema: %+v\n", table.Schema)
 		// Create future partitions based on PartitionCount
 		if err = m.CreateFuturePartitions(ctx, table); err != nil {
 			return fmt.Errorf("failed to create future partitions for %s: %w", table.Name, err)
@@ -216,7 +217,7 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 
 		// Check if partition already exists
 		partitionName := m.generatePartitionName(tc, bounds)
-		exists, err := m.partitionExists(ctx, partitionName)
+		exists, err := m.partitionExists(ctx, partitionName, tc.Schema)
 		if err != nil {
 			return fmt.Errorf("failed to check if partition exists: %w", err)
 		}
@@ -241,9 +242,9 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 }
 
 // partitionExists checks if a partition table already exists
-func (m *Manager) partitionExists(ctx context.Context, partitionName string) (bool, error) {
+func (m *Manager) partitionExists(ctx context.Context, partitionName, partitionSchemaName string) (bool, error) {
 	var exists bool
-	err := m.db.QueryRowContext(ctx, getPartitionExists, m.config.SchemaName, partitionName).Scan(&exists)
+	err := m.db.QueryRowContext(ctx, getPartitionExists, partitionSchemaName, partitionName).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check partition existence: %w", err)
 	}
@@ -312,7 +313,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 					"date", partitionDate)
 
 				// Drop the partition
-				if _, err = m.db.ExecContext(ctx, fmt.Sprintf(dropPartition, m.config.SchemaName, partition)); err != nil {
+				if _, err = m.db.ExecContext(ctx, fmt.Sprintf(dropPartition, table.SchemaName, partition)); err != nil {
 					m.logger.Error("failed to drop partition",
 						"partition", partition,
 						"error", err)
@@ -386,14 +387,14 @@ func (m *Manager) generatePartitionSQL(name string, tc Table, b Bounds) (string,
 func (m *Manager) generateRangePartitionSQL(name string, tc Table, b Bounds) string {
 	if len(tc.TenantId) > 0 {
 		return fmt.Sprintf(generatePartitionWithTenantIdQuery,
-			m.config.SchemaName, name,
-			m.config.SchemaName, tc.Name,
+			tc.Schema, name,
+			tc.Schema, tc.Name,
 			tc.TenantId, b.From.Format(time.DateOnly),
 			tc.TenantId, b.To.Format(time.DateOnly))
 	}
 	return fmt.Sprintf(generatePartitionQuery,
-		m.config.SchemaName, name,
-		m.config.SchemaName, tc.Name,
+		tc.Schema, name,
+		tc.Schema, tc.Name,
 		b.From.Format(time.DateOnly),
 		b.To.Format(time.DateOnly))
 }
@@ -401,7 +402,7 @@ func (m *Manager) generateRangePartitionSQL(name string, tc Table, b Bounds) str
 func (m *Manager) checkTableColumnsExist(ctx context.Context, tc Table) error {
 	if len(tc.TenantIdColumn) > 0 && len(tc.TenantId) > 0 {
 		var exists bool
-		err := m.db.QueryRowxContext(ctx, checkColumnExists, m.config.SchemaName, tc.Name, tc.TenantIdColumn).Scan(&exists)
+		err := m.db.QueryRowxContext(ctx, checkColumnExists, tc.Schema, tc.Name, tc.TenantIdColumn).Scan(&exists)
 		if err != nil {
 			return err
 		}
@@ -412,7 +413,7 @@ func (m *Manager) checkTableColumnsExist(ctx context.Context, tc Table) error {
 	}
 
 	var exists bool
-	err := m.db.QueryRowxContext(ctx, checkColumnExists, m.config.SchemaName, tc.Name, tc.PartitionBy).Scan(&exists)
+	err := m.db.QueryRowxContext(ctx, checkColumnExists, tc.Schema, tc.Name, tc.PartitionBy).Scan(&exists)
 	if err != nil {
 		return err
 	}
@@ -496,7 +497,7 @@ func (m *Manager) AddManagedTable(tc Table) error {
 	res, err := m.db.ExecContext(ctx, upsertSQL,
 		ulid.Make().String(),
 		mTable.TableName,
-		m.config.SchemaName,
+		mTable.SchemaName,
 		mTable.TenantID,
 		mTable.TenantColumn,
 		mTable.PartitionBy,
@@ -562,7 +563,7 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 	}
 
 	var unManagedPartitions []unManagedPartition
-	if err := m.db.SelectContext(ctx, &unManagedPartitions, findUnmanagedPartitionsQuery, m.config.SchemaName); err != nil {
+	if err := m.db.SelectContext(ctx, &unManagedPartitions, findUnmanagedPartitionsQuery, tc.Schema); err != nil {
 		return fmt.Errorf("failed to query unmanaged partitions: %w", err)
 	}
 
@@ -586,7 +587,7 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 
 		table := Table{
 			Name:              p.TableName,
-			Schema:            m.config.SchemaName,
+			Schema:            p.SchemaName,
 			TenantId:          p.TenantId,
 			TenantIdColumn:    tc.TenantIdColumn,
 			PartitionBy:       tc.PartitionBy,

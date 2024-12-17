@@ -190,9 +190,6 @@ type Table struct {
 }
 
 type Config struct {
-	// SchemaName is the schema of the tables
-	SchemaName string
-
 	// SampleRate is how often the internal ticker runs
 	SampleRate time.Duration
 
@@ -202,12 +199,8 @@ type Config struct {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	if c.SchemaName == "" {
-		return fmt.Errorf("schema name cannot be empty")
-	}
-
 	if c.SampleRate == 0 {
-		return fmt.Errorf("sample-rate cannot be zero")
+		return errors.New("sample-rate cannot be zero")
 	}
 
 	for i, table := range c.Tables {
@@ -223,6 +216,10 @@ func (c *Config) Validate() error {
 func (tc *Table) Validate() error {
 	if tc.Name == "" {
 		return errors.New("name cannot be empty")
+	}
+
+	if tc.Schema == "" {
+		return errors.New("schema name cannot be empty")
 	}
 
 	if tc.RetentionPeriod == 0 {

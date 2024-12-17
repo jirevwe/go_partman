@@ -79,11 +79,11 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
 					PartitionInterval: time.Hour * 24,
@@ -109,10 +109,10 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
+					Schema:            "test",
 					Name:              "sample",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
@@ -146,6 +146,7 @@ func TestManager(t *testing.T) {
 
 		tableConfig := Table{
 			Name:              "sample",
+			Schema:            "test",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
 			PartitionInterval: time.Hour * 24,
@@ -155,7 +156,6 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				tableConfig,
@@ -168,7 +168,7 @@ func TestManager(t *testing.T) {
 		require.NoError(t, err)
 
 		var partitionCount uint
-		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", config.SchemaName)
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", tableConfig.Schema)
 		require.NoError(t, err)
 		require.Equal(t, tableConfig.PartitionCount, partitionCount)
 	})
@@ -187,6 +187,7 @@ func TestManager(t *testing.T) {
 
 		tableConfig := Table{
 			Name:              "sample",
+			Schema:            "test",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
 			PartitionInterval: time.Hour * 24,
@@ -196,7 +197,6 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				tableConfig,
@@ -209,7 +209,7 @@ func TestManager(t *testing.T) {
 		require.NoError(t, err)
 
 		var partitionCount uint
-		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", config.SchemaName)
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", tableConfig.Schema)
 		require.NoError(t, err)
 		require.Equal(t, tableConfig.PartitionCount, partitionCount)
 	})
@@ -228,6 +228,7 @@ func TestManager(t *testing.T) {
 
 		tableConfig := Table{
 			Name:              "sample",
+			Schema:            "test",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
 			PartitionInterval: time.Hour * 24,
@@ -237,7 +238,6 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				tableConfig,
@@ -250,7 +250,7 @@ func TestManager(t *testing.T) {
 		require.NoError(t, err)
 
 		var partitionCount uint
-		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", config.SchemaName)
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", tableConfig.Schema)
 		require.NoError(t, err)
 		require.Equal(t, tableConfig.PartitionCount+1, partitionCount)
 	})
@@ -264,11 +264,11 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
 					PartitionInterval: time.Hour * 24,
@@ -302,11 +302,11 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
 					PartitionInterval: time.Hour * 24,
@@ -373,11 +373,12 @@ func TestManager(t *testing.T) {
 		t.Run("without tenant ID", func(t *testing.T) {
 			tableConfig := Table{
 				Name:          "sample",
+				Schema:        "test",
 				PartitionType: TypeRange,
 				PartitionBy:   "created_at",
 			}
 			manager.config = &Config{
-				SchemaName: "test",
+				SampleRate: time.Second,
 				Tables: []Table{
 					tableConfig,
 				},
@@ -395,11 +396,12 @@ func TestManager(t *testing.T) {
 			tableConfig := Table{
 				Name:          "sample",
 				TenantId:      "tenant1",
+				Schema:        "test",
 				PartitionType: TypeRange,
 				PartitionBy:   "created_at",
 			}
 			manager.config = &Config{
-				SchemaName: "test",
+				SampleRate: time.Second,
 				Tables: []Table{
 					tableConfig,
 				},
@@ -424,11 +426,11 @@ func TestManager(t *testing.T) {
 		logger := slog.Default()
 		clock := NewSimulatedClock(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC))
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					RetentionPeriod:   time.Hour * 24,
 					PartitionInterval: time.Hour * 24,
 					PartitionType:     TypeRange,
@@ -441,7 +443,7 @@ func TestManager(t *testing.T) {
 		manager, err := NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
-		exists, err := manager.partitionExists(context.Background(), "sample_20240315")
+		exists, err := manager.partitionExists(context.Background(), "sample_20240315", "test")
 		require.NoError(t, err)
 		require.True(t, exists)
 	})
@@ -457,6 +459,7 @@ func TestManager(t *testing.T) {
 
 		tableConfig := Table{
 			Name:              "sample",
+			Schema:            "test",
 			TenantId:          "tenant1",
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
@@ -468,7 +471,6 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				tableConfig,
@@ -511,6 +513,7 @@ func TestManager(t *testing.T) {
 
 		tenantOneConfig := Table{
 			Name:              "sample",
+			Schema:            "test",
 			TenantId:          "tenant_1",
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
@@ -521,6 +524,7 @@ func TestManager(t *testing.T) {
 		}
 		tenantTwoConfig := Table{
 			Name:              "sample",
+			Schema:            "test",
 			TenantId:          "tenant_2",
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
@@ -532,7 +536,6 @@ func TestManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: 30 * time.Second,
 			Tables: []Table{
 				tenantOneConfig,
@@ -609,11 +612,11 @@ func TestManager(t *testing.T) {
 
 		// Setup manager config with two tenants
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					TenantId:          "tenant_1",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
@@ -624,6 +627,7 @@ func TestManager(t *testing.T) {
 				},
 				{
 					Name:              "sample",
+					Schema:            "test",
 					TenantId:          "tenant_2",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
@@ -702,11 +706,11 @@ func TestManager(t *testing.T) {
 
 		// Initial configuration with two tenants
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					TenantId:          "tenant1",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
@@ -717,6 +721,7 @@ func TestManager(t *testing.T) {
 				},
 				{
 					Name:              "sample",
+					Schema:            "test",
 					TenantId:          "tenant2",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
@@ -739,6 +744,7 @@ func TestManager(t *testing.T) {
 		// Add a new managed table
 		newTableConfig := Table{
 			Name:              "sample",
+			Schema:            "test",
 			TenantId:          "tenant3",
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
@@ -815,7 +821,6 @@ func TestManager(t *testing.T) {
 			// Initialize manager
 			logger := slog.Default()
 			config := &Config{
-				SchemaName: "test",
 				SampleRate: time.Second,
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -825,6 +830,7 @@ func TestManager(t *testing.T) {
 
 			// Import existing partitions
 			err = manager.ImportExistingPartitions(ctx, Table{
+				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
@@ -879,7 +885,6 @@ func TestManager(t *testing.T) {
 			// Initialize manager
 			logger := slog.Default()
 			config := &Config{
-				SchemaName: "test",
 				SampleRate: time.Second,
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -889,6 +894,7 @@ func TestManager(t *testing.T) {
 
 			// Import existing partitions
 			err = manager.ImportExistingPartitions(ctx, Table{
+				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
@@ -936,7 +942,6 @@ func TestManager(t *testing.T) {
 
 			logger := slog.Default()
 			config := &Config{
-				SchemaName: "test",
 				SampleRate: time.Second,
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -945,6 +950,7 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 
 			err = manager.ImportExistingPartitions(ctx, Table{
+				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
@@ -991,7 +997,6 @@ func TestManager(t *testing.T) {
 
 			logger := slog.Default()
 			config := &Config{
-				SchemaName: "test",
 				SampleRate: time.Second,
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -1013,6 +1018,7 @@ func TestManager(t *testing.T) {
 
 			// Try to import partitions
 			err = manager.ImportExistingPartitions(ctx, Table{
+				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
@@ -1060,7 +1066,6 @@ func TestManager(t *testing.T) {
 
 			logger := slog.Default()
 			config := &Config{
-				SchemaName: "test",
 				SampleRate: time.Second,
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -1069,6 +1074,7 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 
 			err = manager.ImportExistingPartitions(ctx, Table{
+				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
@@ -1144,7 +1150,6 @@ func TestManager(t *testing.T) {
 
 			logger := slog.Default()
 			config := &Config{
-				SchemaName: "test",
 				SampleRate: time.Second,
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -1154,6 +1159,7 @@ func TestManager(t *testing.T) {
 
 			// Import existing partitions
 			err = manager.ImportExistingPartitions(ctx, Table{
+				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
@@ -1178,11 +1184,11 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, managedTables, 2)
 
-			for _, managedTable := range managedTables {
-				if managedTable.TableName == "sample_with_tenant" {
-					require.Equal(t, "tenant1", managedTable.TenantID)
+			for _, m := range managedTables {
+				if m.TableName == "sample_with_tenant" {
+					require.Equal(t, "tenant1", m.TenantID)
 				} else {
-					require.Empty(t, managedTable.TenantID)
+					require.Empty(t, m.TenantID)
 				}
 			}
 		})
@@ -1222,7 +1228,6 @@ func TestManager(t *testing.T) {
 
 			logger := slog.Default()
 			config := &Config{
-				SchemaName: "test",
 				SampleRate: time.Second,
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -1232,6 +1237,7 @@ func TestManager(t *testing.T) {
 
 			// Import existing partitions
 			err = manager.ImportExistingPartitions(ctx, Table{
+				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
@@ -1272,11 +1278,11 @@ func TestNewManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
 					PartitionInterval: time.Hour * 24,
@@ -1301,11 +1307,11 @@ func TestNewManager(t *testing.T) {
 	t.Run("Error - DB must not be nil", func(t *testing.T) {
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
 					PartitionInterval: time.Hour * 24,
@@ -1332,11 +1338,11 @@ func TestNewManager(t *testing.T) {
 		defer cleanupTestDB(t, db, pool)
 
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
 					PartitionInterval: time.Hour * 24,
@@ -1381,11 +1387,11 @@ func TestNewManager(t *testing.T) {
 
 		logger := slog.Default()
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
 					PartitionInterval: time.Hour * 24,
@@ -1419,11 +1425,11 @@ func TestNewManager(t *testing.T) {
 
 		// Initial configuration with two tenants
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					TenantId:          "tenant1",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
@@ -1434,6 +1440,7 @@ func TestNewManager(t *testing.T) {
 				},
 				{
 					Name:              "sample",
+					Schema:            "test",
 					TenantId:          "tenant2",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
@@ -1461,6 +1468,7 @@ func TestNewManager(t *testing.T) {
 		// Add a new managed table
 		newTableConfig := Table{
 			Name:              "sample",
+			Schema:            "test",
 			TenantId:          "tenant3",
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
@@ -1526,6 +1534,7 @@ func TestManagerConfigUpdate(t *testing.T) {
 		// Initial config with one table
 		initialTable := Table{
 			Name:              "sample",
+			Schema:            "test",
 			TenantId:          "tenant1",
 			TenantIdColumn:    "project_id",
 			PartitionType:     TypeRange,
@@ -1536,7 +1545,6 @@ func TestManagerConfigUpdate(t *testing.T) {
 		}
 
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables:     []Table{initialTable},
 		}
@@ -1548,6 +1556,7 @@ func TestManagerConfigUpdate(t *testing.T) {
 		// Add a new table
 		newTable := Table{
 			Name:              "sample",
+			Schema:            "test",
 			TenantId:          "tenant2",
 			TenantIdColumn:    "project_id",
 			PartitionType:     TypeRange,
@@ -1577,7 +1586,6 @@ func TestManagerConfigUpdate(t *testing.T) {
 
 		// Initial config with empty tables
 		config := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 		}
 
@@ -1598,6 +1606,7 @@ func TestManagerConfigUpdate(t *testing.T) {
 
 		// Import existing partitions
 		err = manager.ImportExistingPartitions(ctx, Table{
+			Schema:            "test",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
 			PartitionInterval: time.Hour * 24,
@@ -1687,11 +1696,11 @@ func TestManagerInitialization(t *testing.T) {
 
 		// Create the manager with one table pre-configured
 		newConfig := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					TenantId:          "tenant3",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
@@ -1780,11 +1789,11 @@ func TestManagerInitialization(t *testing.T) {
 
 		// Create new manager with overlapping config
 		newConfig := &Config{
-			SchemaName: "test",
 			SampleRate: time.Second,
 			Tables: []Table{
 				{
 					Name:              "sample",
+					Schema:            "test",
 					TenantId:          "tenant1", // Same tenant as existing
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",

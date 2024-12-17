@@ -6,23 +6,21 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jirevwe/go_partman"
 	"github.com/jmoiron/sqlx"
-
 	"log"
-	"log/slog"
-	"os"
-
 	"time"
 )
 
 func main() {
-	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
+	logger := partman.NewSlogLogger()
+
+	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/party?sslmode=disable")
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), pgxCfg)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 
 	sqlDB := stdlib.OpenDBFromPool(pool)
@@ -32,10 +30,10 @@ func main() {
 		SampleRate: time.Second,
 	}
 
-	clock := partman.NewSimulatedClock(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC))
-	manager, err := partman.NewAndStart(db, config, slog.New(slog.NewTextHandler(os.Stdout, nil)), clock)
+	clock := partman.NewRealClock()
+	manager, err := partman.NewAndStart(db, config, logger, clock)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 
 	// Import existing partitions

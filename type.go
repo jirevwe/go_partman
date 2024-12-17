@@ -5,7 +5,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -43,7 +42,7 @@ func WithDB(db *sqlx.DB) Option {
 }
 
 // WithLogger function to set the logger
-func WithLogger(logger *slog.Logger) Option {
+func WithLogger(logger Logger) Option {
 	return func(m *Manager) error {
 		if logger == nil {
 			return ErrLoggerMustNotBeNil
@@ -95,10 +94,6 @@ func WithHook(hook Hook) Option {
 }
 
 type TimeDuration time.Duration
-
-func (t *TimeDuration) Duration() time.Duration {
-	return time.Duration(*t)
-}
 
 func (t *TimeDuration) Scan(value interface{}) error {
 	s, ok := value.(string)

@@ -3,7 +3,6 @@ package partman
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"sync"
 	"time"
@@ -17,7 +16,7 @@ import (
 // Manager Partition manager
 type Manager struct {
 	db     *sqlx.DB
-	logger *slog.Logger
+	logger Logger
 	config *Config
 	clock  Clock
 	hook   Hook
@@ -65,7 +64,7 @@ func NewManager(options ...Option) (*Manager, error) {
 	return m, nil
 }
 
-func NewAndStart(db *sqlx.DB, config *Config, logger *slog.Logger, clock Clock) (*Manager, error) {
+func NewAndStart(db *sqlx.DB, config *Config, logger Logger, clock Clock) (*Manager, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -194,7 +193,6 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 			return fmt.Errorf("failed to upsert table config for %s", table.Name)
 		}
 
-		fmt.Printf("schema: %+v\n", table.Schema)
 		// Create future partitions based on PartitionCount
 		if err = m.CreateFuturePartitions(ctx, table); err != nil {
 			return fmt.Errorf("failed to create future partitions for %s: %w", table.Name, err)
@@ -268,7 +266,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 
 	for _, table := range tables {
 		// Find partitions older than the retention period
-		cutoffTime := m.clock.Now().Add(-table.RetentionPeriod.Duration())
+		cutoffTime := m.clock.Now().Add(time.Duration(-table.RetentionPeriod))
 		pattern := fmt.Sprintf("%s_%%", table.TableName)
 		if len(table.TenantId) > 0 {
 			pattern = fmt.Sprintf("%s_%s_%%", table.TableName, table.TenantId)

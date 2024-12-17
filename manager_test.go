@@ -3,7 +3,6 @@ package partman
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"testing"
 	"time"
@@ -77,7 +76,7 @@ func TestManager(t *testing.T) {
 		createTestTable(t, context.Background(), db)
 		defer dropTestTable(t, context.Background(), db)
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -107,7 +106,7 @@ func TestManager(t *testing.T) {
 		createTestTable(t, context.Background(), db)
 		defer dropTestTable(t, context.Background(), db)
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -154,7 +153,7 @@ func TestManager(t *testing.T) {
 			PartitionCount:    10,
 		}
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -195,7 +194,7 @@ func TestManager(t *testing.T) {
 			PartitionCount:    10,
 		}
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -236,7 +235,7 @@ func TestManager(t *testing.T) {
 			PartitionCount:    10,
 		}
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -262,7 +261,7 @@ func TestManager(t *testing.T) {
 		createTestTable(t, context.Background(), db)
 		defer dropTestTable(t, context.Background(), db)
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -300,7 +299,7 @@ func TestManager(t *testing.T) {
 		createTestTable(t, context.Background(), db)
 		defer dropTestTable(t, context.Background(), db)
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -423,7 +422,7 @@ func TestManager(t *testing.T) {
 		createTestTable(t, context.Background(), db)
 		defer dropTestTable(t, context.Background(), db)
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		clock := NewSimulatedClock(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC))
 		config := &Config{
 			SampleRate: time.Second,
@@ -469,7 +468,7 @@ func TestManager(t *testing.T) {
 			PartitionCount:    5,
 		}
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -534,7 +533,7 @@ func TestManager(t *testing.T) {
 			PartitionCount:    5,
 		}
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: 30 * time.Second,
 			Tables: []Table{
@@ -639,7 +638,7 @@ func TestManager(t *testing.T) {
 			},
 		}
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		clock := NewSimulatedClock(now)
 
@@ -733,7 +732,7 @@ func TestManager(t *testing.T) {
 			},
 		}
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		clock := NewSimulatedClock(now)
 
@@ -819,7 +818,7 @@ func TestManager(t *testing.T) {
 			}
 
 			// Initialize manager
-			logger := slog.Default()
+			logger := NewSlogLogger()
 			config := &Config{
 				SampleRate: time.Second,
 			}
@@ -883,7 +882,7 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 
 			// Initialize manager
-			logger := slog.Default()
+			logger := NewSlogLogger()
 			config := &Config{
 				SampleRate: time.Second,
 			}
@@ -940,7 +939,7 @@ func TestManager(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			logger := slog.Default()
+			logger := NewSlogLogger()
 			config := &Config{
 				SampleRate: time.Second,
 			}
@@ -995,7 +994,7 @@ func TestManager(t *testing.T) {
 				FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`)
 			require.NoError(t, err)
 
-			logger := slog.Default()
+			logger := NewSlogLogger()
 			config := &Config{
 				SampleRate: time.Second,
 			}
@@ -1064,7 +1063,7 @@ func TestManager(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			logger := slog.Default()
+			logger := NewSlogLogger()
 			config := &Config{
 				SampleRate: time.Second,
 			}
@@ -1148,7 +1147,7 @@ func TestManager(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			logger := slog.Default()
+			logger := NewSlogLogger()
 			config := &Config{
 				SampleRate: time.Second,
 			}
@@ -1226,7 +1225,7 @@ func TestManager(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			logger := slog.Default()
+			logger := NewSlogLogger()
 			config := &Config{
 				SampleRate: time.Second,
 			}
@@ -1276,7 +1275,7 @@ func TestNewManager(t *testing.T) {
 		createTestTable(t, context.Background(), db)
 		defer dropTestTable(t, context.Background(), db)
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -1305,7 +1304,7 @@ func TestNewManager(t *testing.T) {
 	})
 
 	t.Run("Error - DB must not be nil", func(t *testing.T) {
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -1368,7 +1367,7 @@ func TestNewManager(t *testing.T) {
 		db, pool := setupTestDB(t)
 		defer cleanupTestDB(t, db, pool)
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		clock := NewSimulatedClock(time.Now())
 
 		manager, err := NewManager(
@@ -1385,7 +1384,7 @@ func TestNewManager(t *testing.T) {
 		db, pool := setupTestDB(t)
 		defer cleanupTestDB(t, db, pool)
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		config := &Config{
 			SampleRate: time.Second,
 			Tables: []Table{
@@ -1452,7 +1451,7 @@ func TestNewManager(t *testing.T) {
 			},
 		}
 
-		logger := slog.Default()
+		logger := NewSlogLogger()
 		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		clock := NewSimulatedClock(now)
 
@@ -1549,8 +1548,9 @@ func TestManagerConfigUpdate(t *testing.T) {
 			Tables:     []Table{initialTable},
 		}
 
+		logger := NewSlogLogger()
 		// Create manager
-		manager, err := NewAndStart(db, config, slog.Default(), NewSimulatedClock(time.Now()))
+		manager, err := NewAndStart(db, config, logger, NewSimulatedClock(time.Now()))
 		require.NoError(t, err)
 
 		// Add a new table
@@ -1589,8 +1589,9 @@ func TestManagerConfigUpdate(t *testing.T) {
 			SampleRate: time.Second,
 		}
 
+		logger := NewSlogLogger()
 		// Create manager
-		manager, err := NewAndStart(db, config, slog.Default(), NewSimulatedClock(time.Now()))
+		manager, err := NewAndStart(db, config, logger, NewSimulatedClock(time.Now()))
 		require.NoError(t, err)
 
 		// Create some existing partitions manually
@@ -1712,9 +1713,10 @@ func TestManagerInitialization(t *testing.T) {
 			},
 		}
 
+		logger := NewSlogLogger()
 		manager, err := NewManager(
 			WithDB(db),
-			WithLogger(slog.Default()),
+			WithLogger(logger),
 			WithConfig(newConfig),
 			WithClock(NewSimulatedClock(time.Now())),
 		)
@@ -1805,9 +1807,10 @@ func TestManagerInitialization(t *testing.T) {
 			},
 		}
 
+		logger := NewSlogLogger()
 		manager, err := NewManager(
 			WithDB(db),
-			WithLogger(slog.Default()),
+			WithLogger(logger),
 			WithConfig(newConfig),
 			WithClock(NewSimulatedClock(time.Now())),
 		)

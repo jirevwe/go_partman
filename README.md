@@ -86,9 +86,9 @@ config := partman.Config{
             TenantIdColumn:    "project_id",        // Column name for tenant ID
             PartitionType:     partman.TypeRange,
             PartitionBy:       "created_at",
-            PartitionInterval: partman.OneDay,
-            PartitionCount:    7,
-            RetentionPeriod:   partman.OneMonth,
+            PartitionInterval: time.Hour * 24,
+		    PartitionCount:    10,
+		    RetentionPeriod:   time.Hour * 24 * 7,
         },
     },
 }
@@ -105,9 +105,9 @@ newTableConfig := partman.TableConfig{
     TenantIdColumn:    "project_id",        // Column name for tenant ID
     PartitionType:     partman.TypeRange,
     PartitionBy:       "created_at",
-    PartitionInterval: partman.OneDay,
-    PartitionCount:    7,
-    RetentionPeriod:   partman.OneMonth,
+    PartitionInterval: time.Hour * 24,
+    PartitionCount:    10,
+    RetentionPeriod:   time.Hour * 24 * 7,
 }
 
 // Add the new managed table
@@ -125,10 +125,9 @@ err = manager.ImportExistingPartitions(context.Background(), partman.Table{
     TenantIdColumn:    "project_id",
     PartitionBy:       "created_at",
     PartitionType:     partman.TypeRange,
-    PartitionInterval: partman.
-    OneDay,
+    PartitionInterval: time.Hour * 24,
     PartitionCount:    10,
-    RetentionPeriod:   partman.OneMonth,
+    RetentionPeriod:   time.Hour * 24 * 7,
 })
 if err != nil {
     log.Fatal(err)
@@ -166,13 +165,6 @@ Currently supports:
 - **Range Partitioning**: Time-based range partitioning with optional tenant ID support
 - **List Partitioning**: Planned for future release
 - **Hash Partitioning**: Planned for future release
-
-### Time Intervals
-
-Built-in time intervals:
-- `OneDay`: 24 hours
-- `OneWeek`: 7 days
-- `OneMonth`: 30 days
 
 ### Maintenance Operations
 

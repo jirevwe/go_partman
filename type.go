@@ -5,9 +5,11 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"github.com/jmoiron/sqlx"
 	"log/slog"
+	"strings"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 var (
@@ -130,9 +132,6 @@ const (
 
 const (
 	DateNoHyphens = "20060102"
-	OneDay        = TimeDuration(24 * time.Hour)
-	OneMonth      = 30 * OneDay
-	OneWeek       = 7 * OneDay
 )
 
 type Partitioner interface {
@@ -141,6 +140,15 @@ type Partitioner interface {
 
 	// DropOldPartitions Drop old partitions based on retention policy
 	DropOldPartitions(ctx context.Context) error
+
+	// Maintain defines a regularly run maintenance routine
+	Maintain(ctx context.Context) error
+
+	// AddManagedTable adds a new managed table to the partition manager
+	AddManagedTable(tc Table) error
+
+	// ImportExistingPartitions scans the database for existing partitions and adds them to the partition management table
+	ImportExistingPartitions(ctx context.Context, tc Table) error
 }
 
 type Bounds struct {
@@ -154,31 +162,31 @@ type D struct {
 
 type Table struct {
 	// Name of the partitioned table
-	Name string `db:"table_name"`
+	Name string
 
 	// Schema of the partitioned table
-	Schema string `db:"schema_name"`
+	Schema string
 
 	// TenantId Tenant ID column value (e.g., 01J2V010NV1259CYWQEYQC8F35)
-	TenantId string `db:"tenant_id"`
+	TenantId string
 
 	// TenantIdColumn Tenant ID column to partition by (e.g., tenant_id)
-	TenantIdColumn string `db:"tenant_column"`
+	TenantIdColumn string
 
 	// PartitionBy Timestamp column to partition by (e.g., created_at)
-	PartitionBy string `db:"partition_by"`
+	PartitionBy string
 
 	// PartitionType Postgres partition type
-	PartitionType PartitionerType `db:"partition_type"` // "range", "list", or "hash"
+	PartitionType PartitionerType // "range", "list", or "hash"
 
 	// PartitionInterval For range partitions (e.g., "1 month", "1 day")
-	PartitionInterval TimeDuration `db:"partition_interval"`
+	PartitionInterval time.Duration
 
 	// PartitionCount is the number of partitions a table will have; defaults to 10
-	PartitionCount uint `db:"partition_count"`
+	PartitionCount uint
 
 	// RetentionPeriod is how long after which partitions will be dropped (e.g., "1 month", "1 day")
-	RetentionPeriod TimeDuration `db:"retention_period"`
+	RetentionPeriod time.Duration
 }
 
 type Config struct {
@@ -251,6 +259,20 @@ func (tc *Table) Validate() error {
 	return nil
 }
 
+func (tc *Table) toManagedTable() managedTable {
+	return managedTable{
+		TableName:         tc.Name,
+		SchemaName:        tc.Schema,
+		TenantID:          tc.TenantId,
+		TenantColumn:      strings.ToLower(tc.TenantIdColumn),
+		PartitionBy:       tc.PartitionBy,
+		PartitionType:     string(tc.PartitionType),
+		PartitionCount:    tc.PartitionCount,
+		PartitionInterval: TimeDuration(tc.PartitionInterval),
+		RetentionPeriod:   TimeDuration(tc.RetentionPeriod),
+	}
+}
+
 type StringArray []string
 
 func (a *StringArray) Scan(src interface{}) error {
@@ -270,4 +292,30 @@ func (a *StringArray) Scan(src interface{}) error {
 	*a = array
 
 	return nil
+}
+
+type managedTable struct {
+	TableName         string       `db:"table_name"`
+	SchemaName        string       `db:"schema_name"`
+	TenantID          string       `db:"tenant_id"`
+	TenantColumn      string       `db:"tenant_column"`
+	PartitionBy       string       `db:"partition_by"`
+	PartitionType     string       `db:"partition_type"`
+	PartitionCount    uint         `db:"partition_count"`
+	PartitionInterval TimeDuration `db:"partition_interval"`
+	RetentionPeriod   TimeDuration `db:"retention_period"`
+}
+
+func (m *managedTable) toTable() Table {
+	return Table{
+		Name:              m.TableName,
+		Schema:            m.SchemaName,
+		TenantId:          m.TenantID,
+		TenantIdColumn:    m.TenantColumn,
+		PartitionBy:       m.PartitionBy,
+		PartitionCount:    m.PartitionCount,
+		PartitionType:     PartitionerType(m.PartitionType),
+		RetentionPeriod:   time.Duration(m.RetentionPeriod),
+		PartitionInterval: time.Duration(m.PartitionInterval),
+	}
 }

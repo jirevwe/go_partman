@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
+
 	"testing"
 	"time"
 
@@ -86,8 +86,8 @@ func TestManager(t *testing.T) {
 					Name:              "sample",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
-					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(time.Hour),
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour,
 					PartitionCount:    2,
 				},
 			},
@@ -116,8 +116,8 @@ func TestManager(t *testing.T) {
 					Name:              "sample",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
-					PartitionInterval: OneDay,
-					RetentionPeriod:   OneWeek,
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
 					PartitionCount:    2,
 				},
 			},
@@ -148,8 +148,8 @@ func TestManager(t *testing.T) {
 			Name:              "sample",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
-			PartitionInterval: OneDay,
-			RetentionPeriod:   OneWeek,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    10,
 		}
 
@@ -189,8 +189,8 @@ func TestManager(t *testing.T) {
 			Name:              "sample",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
-			PartitionInterval: OneDay,
-			RetentionPeriod:   OneWeek,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    10,
 		}
 
@@ -230,8 +230,8 @@ func TestManager(t *testing.T) {
 			Name:              "sample",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
-			PartitionInterval: OneDay,
-			RetentionPeriod:   OneWeek,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    10,
 		}
 
@@ -271,8 +271,8 @@ func TestManager(t *testing.T) {
 					Name:              "sample",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
-					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(time.Hour),
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour,
 					PartitionCount:    2,
 				},
 			},
@@ -309,8 +309,8 @@ func TestManager(t *testing.T) {
 					Name:              "sample",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
-					PartitionInterval: OneDay,
-					RetentionPeriod:   OneWeek,
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
 					PartitionCount:    2,
 				},
 			},
@@ -429,8 +429,8 @@ func TestManager(t *testing.T) {
 			Tables: []Table{
 				{
 					Name:              "sample",
-					RetentionPeriod:   OneDay,
-					PartitionInterval: OneDay,
+					RetentionPeriod:   time.Hour * 24,
+					PartitionInterval: time.Hour * 24,
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
 					PartitionCount:    2,
@@ -461,8 +461,8 @@ func TestManager(t *testing.T) {
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
-			PartitionInterval: OneDay,
-			RetentionPeriod:   OneWeek,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    5,
 		}
 
@@ -515,8 +515,8 @@ func TestManager(t *testing.T) {
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
-			PartitionInterval: OneDay,
-			RetentionPeriod:   OneWeek,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    5,
 		}
 		tenantTwoConfig := Table{
@@ -525,8 +525,8 @@ func TestManager(t *testing.T) {
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
-			PartitionInterval: OneDay,
-			RetentionPeriod:   OneWeek,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    5,
 		}
 
@@ -618,8 +618,8 @@ func TestManager(t *testing.T) {
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
-					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   1 * time.Minute,
 					PartitionCount:    2,
 				},
 				{
@@ -628,8 +628,8 @@ func TestManager(t *testing.T) {
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
-					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   1 * time.Minute,
 					PartitionCount:    2,
 				},
 			},
@@ -711,8 +711,8 @@ func TestManager(t *testing.T) {
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
-					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   1 * time.Minute,
 					PartitionCount:    2,
 				},
 				{
@@ -721,8 +721,8 @@ func TestManager(t *testing.T) {
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
-					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   1 * time.Minute,
 					PartitionCount:    2,
 				},
 			},
@@ -743,8 +743,8 @@ func TestManager(t *testing.T) {
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
-			PartitionInterval: OneDay,
-			RetentionPeriod:   TimeDuration(1 * time.Minute),
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   1 * time.Minute,
 			PartitionCount:    2,
 		}
 		err = manager.AddManagedTable(newTableConfig)
@@ -828,9 +828,9 @@ func TestManager(t *testing.T) {
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
-				PartitionInterval: OneDay,
+				PartitionInterval: time.Hour * 24,
 				PartitionCount:    10,
-				RetentionPeriod:   OneMonth,
+				RetentionPeriod:   time.Hour * 24 * 31,
 			})
 			require.NoError(t, err)
 
@@ -892,9 +892,9 @@ func TestManager(t *testing.T) {
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
-				PartitionInterval: OneDay,
+				PartitionInterval: time.Hour * 24,
 				PartitionCount:    10,
-				RetentionPeriod:   OneMonth,
+				RetentionPeriod:   time.Hour * 24 * 31,
 			})
 			require.NoError(t, err)
 
@@ -948,9 +948,9 @@ func TestManager(t *testing.T) {
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
-				PartitionInterval: OneDay,
+				PartitionInterval: time.Hour * 24,
 				PartitionCount:    10,
-				RetentionPeriod:   OneMonth,
+				RetentionPeriod:   time.Hour * 24 * 31,
 			})
 			require.NoError(t, err)
 
@@ -1016,9 +1016,9 @@ func TestManager(t *testing.T) {
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
-				PartitionInterval: OneDay,
+				PartitionInterval: time.Hour * 24,
 				PartitionCount:    10,
-				RetentionPeriod:   OneMonth,
+				RetentionPeriod:   time.Hour * 24 * 31,
 			})
 			require.NoError(t, err)
 
@@ -1072,9 +1072,9 @@ func TestManager(t *testing.T) {
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
-				PartitionInterval: OneDay,
+				PartitionInterval: time.Hour * 24,
 				PartitionCount:    10,
-				RetentionPeriod:   OneMonth,
+				RetentionPeriod:   time.Hour * 24 * 31,
 			})
 			require.NoError(t, err)
 
@@ -1157,9 +1157,9 @@ func TestManager(t *testing.T) {
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
-				PartitionInterval: OneDay,
+				PartitionInterval: time.Hour * 24,
 				PartitionCount:    10,
-				RetentionPeriod:   OneMonth,
+				RetentionPeriod:   time.Hour * 24 * 31,
 			})
 			require.NoError(t, err)
 
@@ -1235,9 +1235,9 @@ func TestManager(t *testing.T) {
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     TypeRange,
-				PartitionInterval: OneDay,
+				PartitionInterval: time.Hour * 24,
 				PartitionCount:    10,
-				RetentionPeriod:   OneMonth,
+				RetentionPeriod:   time.Hour * 24 * 31,
 			})
 			require.NoError(t, err)
 
@@ -1279,8 +1279,8 @@ func TestNewManager(t *testing.T) {
 					Name:              "sample",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
-					PartitionInterval: OneDay,
-					RetentionPeriod:   OneWeek,
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
 					PartitionCount:    2,
 				},
 			},
@@ -1308,8 +1308,8 @@ func TestNewManager(t *testing.T) {
 					Name:              "sample",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
-					PartitionInterval: OneDay,
-					RetentionPeriod:   OneWeek,
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
 					PartitionCount:    2,
 				},
 			},
@@ -1339,8 +1339,8 @@ func TestNewManager(t *testing.T) {
 					Name:              "sample",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
-					PartitionInterval: OneDay,
-					RetentionPeriod:   OneWeek,
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
 					PartitionCount:    2,
 				},
 			},
@@ -1388,8 +1388,8 @@ func TestNewManager(t *testing.T) {
 					Name:              "sample",
 					PartitionType:     TypeRange,
 					PartitionBy:       "created_at",
-					PartitionInterval: OneDay,
-					RetentionPeriod:   OneWeek,
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
 					PartitionCount:    2,
 				},
 			},
@@ -1428,8 +1428,8 @@ func TestNewManager(t *testing.T) {
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
-					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   1 * time.Minute,
 					PartitionCount:    2,
 				},
 				{
@@ -1438,8 +1438,8 @@ func TestNewManager(t *testing.T) {
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
-					PartitionInterval: OneDay,
-					RetentionPeriod:   TimeDuration(1 * time.Minute),
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   1 * time.Minute,
 					PartitionCount:    2,
 				},
 			},
@@ -1465,8 +1465,8 @@ func TestNewManager(t *testing.T) {
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
-			PartitionInterval: OneDay,
-			RetentionPeriod:   TimeDuration(1 * time.Minute),
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   1 * time.Minute,
 			PartitionCount:    2,
 		}
 		err = manager.AddManagedTable(newTableConfig)
@@ -1530,8 +1530,8 @@ func TestManagerConfigUpdate(t *testing.T) {
 			TenantIdColumn:    "project_id",
 			PartitionType:     TypeRange,
 			PartitionBy:       "created_at",
-			PartitionInterval: OneDay,
-			RetentionPeriod:   OneWeek,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    2,
 		}
 
@@ -1552,8 +1552,8 @@ func TestManagerConfigUpdate(t *testing.T) {
 			TenantIdColumn:    "project_id",
 			PartitionType:     TypeRange,
 			PartitionBy:       "created_at",
-			PartitionInterval: OneDay,
-			RetentionPeriod:   OneWeek,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    2,
 		}
 
@@ -1600,8 +1600,8 @@ func TestManagerConfigUpdate(t *testing.T) {
 		err = manager.ImportExistingPartitions(ctx, Table{
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
-			PartitionInterval: OneDay,
-			RetentionPeriod:   OneWeek,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    2,
 		})
 		require.NoError(t, err)
@@ -1614,7 +1614,7 @@ func TestManagerConfigUpdate(t *testing.T) {
 		require.Equal(t, "sample", importedTable.Name)
 		require.Equal(t, TypeRange, importedTable.PartitionType)
 		require.Equal(t, "created_at", importedTable.PartitionBy)
-		require.Equal(t, OneDay, importedTable.PartitionInterval)
+		require.Equal(t, time.Hour*24, importedTable.PartitionInterval)
 	})
 }
 
@@ -1639,9 +1639,9 @@ func TestManagerInitialization(t *testing.T) {
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     "range",
-				PartitionInterval: OneDay,
+				PartitionInterval: time.Hour * 24,
 				PartitionCount:    5,
-				RetentionPeriod:   OneMonth,
+				RetentionPeriod:   time.Hour * 24 * 31,
 			},
 			{
 				Name:              "sample",
@@ -1650,9 +1650,9 @@ func TestManagerInitialization(t *testing.T) {
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     "range",
-				PartitionInterval: OneDay,
+				PartitionInterval: time.Hour * 24,
 				PartitionCount:    3,
-				RetentionPeriod:   OneDay,
+				RetentionPeriod:   time.Hour * 24,
 			},
 		}
 
@@ -1669,17 +1669,18 @@ func TestManagerInitialization(t *testing.T) {
 		}
 
 		for _, tc := range existingTables {
+			mTable := tc.toManagedTable()
 			_, err = db.ExecContext(ctx, upsertSQL,
 				ulid.Make().String(),
-				tc.Name,
-				tc.Schema,
-				strings.ToLower(tc.TenantId),
-				tc.TenantIdColumn,
-				tc.PartitionBy,
-				tc.PartitionType,
-				tc.PartitionCount,
-				tc.PartitionInterval,
-				tc.RetentionPeriod,
+				mTable.TableName,
+				mTable.SchemaName,
+				mTable.TenantID,
+				mTable.TenantColumn,
+				mTable.PartitionBy,
+				mTable.PartitionType,
+				mTable.PartitionCount,
+				mTable.PartitionInterval,
+				mTable.RetentionPeriod,
 			)
 			require.NoError(t, err)
 		}
@@ -1695,8 +1696,8 @@ func TestManagerInitialization(t *testing.T) {
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
-					PartitionInterval: OneDay,
-					RetentionPeriod:   OneWeek,
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
 					PartitionCount:    2,
 				},
 			},
@@ -1727,18 +1728,18 @@ func TestManagerInitialization(t *testing.T) {
 		tenant1Table := findTable(manager.config.Tables, "tenant1")
 		require.NotNil(t, tenant1Table)
 		require.Equal(t, uint(5), tenant1Table.PartitionCount)
-		require.Equal(t, OneMonth, tenant1Table.RetentionPeriod)
+		require.Equal(t, time.Hour*24*31, tenant1Table.RetentionPeriod)
 
 		tenant2Table := findTable(manager.config.Tables, "tenant2")
 		require.NotNil(t, tenant2Table)
 		require.Equal(t, uint(3), tenant2Table.PartitionCount)
-		require.Equal(t, OneDay, tenant2Table.RetentionPeriod)
+		require.Equal(t, time.Hour*24, tenant2Table.RetentionPeriod)
 
 		// Verify new table was added
 		tenant3Table := findTable(manager.config.Tables, "tenant3")
 		require.NotNil(t, tenant3Table)
 		require.Equal(t, uint(2), tenant3Table.PartitionCount)
-		require.Equal(t, OneWeek, tenant3Table.RetentionPeriod)
+		require.Equal(t, time.Hour*24*7, tenant3Table.RetentionPeriod)
 	})
 
 	t.Run("new config overrides existing table config", func(t *testing.T) {
@@ -1788,9 +1789,9 @@ func TestManagerInitialization(t *testing.T) {
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
-					PartitionInterval: OneDay,
-					RetentionPeriod:   OneMonth, // Different retention period
-					PartitionCount:    10,       // Different partition count
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 31, // Different retention period
+					PartitionCount:    10,                  // Different partition count
 				},
 			},
 		}
@@ -1808,7 +1809,7 @@ func TestManagerInitialization(t *testing.T) {
 		table := manager.config.Tables[0]
 		require.Equal(t, "tenant1", table.TenantId)
 		require.Equal(t, uint(10), table.PartitionCount)
-		require.Equal(t, OneMonth, table.RetentionPeriod)
+		require.Equal(t, time.Hour*24*31, table.RetentionPeriod)
 
 		// Verify database was updated with new config
 		var dbTable struct {
@@ -1821,6 +1822,6 @@ func TestManagerInitialization(t *testing.T) {
 		)
 		require.NoError(t, err)
 		require.Equal(t, 10, dbTable.PartitionCount)
-		require.Equal(t, "720h0m0s", dbTable.RetentionPeriod)
+		require.Equal(t, "744h0m0s", dbTable.RetentionPeriod)
 	})
 }

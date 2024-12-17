@@ -44,9 +44,9 @@ func main() {
 		TenantIdColumn:    "project_id",
 		PartitionBy:       "created_at",
 		PartitionType:     partman.TypeRange,
-		PartitionInterval: partman.OneDay,
+		PartitionInterval: time.Hour * 24,
 		PartitionCount:    10,
-		RetentionPeriod:   partman.OneMonth,
+		RetentionPeriod:   time.Hour * 24 * 7,
 	})
 	if err != nil {
 		log.Fatal(err)

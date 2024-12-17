@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
@@ -125,7 +124,7 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 		return fmt.Errorf("failed to create management table: %w", err)
 	}
 
-	var existingTables []Table
+	var existingTables []managedTable
 	if err := m.db.SelectContext(ctx, &existingTables, getManagedTablesQuery); err != nil {
 		return fmt.Errorf("failed to load existing managed tables: %w", err)
 	}
@@ -135,11 +134,13 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 
 	// Add existing tables first
 	for _, et := range existingTables {
-		key := et.Name
-		if et.TenantId != "" {
-			key = fmt.Sprintf("%s_%s", et.Name, et.TenantId)
+		te := et.toTable()
+
+		key := te.Name
+		if te.TenantId != "" {
+			key = fmt.Sprintf("%s_%s", te.Name, te.TenantId)
 		}
-		configTables[key] = et
+		configTables[key] = te
 	}
 
 	// Add or update with new config tables
@@ -165,18 +166,20 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 			return err
 		}
 
+		mTable := table.toManagedTable()
+
 		// Insert or update configuration
 		res, err := m.db.ExecContext(ctx, upsertSQL,
 			ulid.Make().String(),
-			table.Name,
+			mTable.TableName,
 			config.SchemaName,
-			strings.ToLower(table.TenantId),
-			table.TenantIdColumn,
-			table.PartitionBy,
-			table.PartitionType,
-			table.PartitionCount,
-			table.PartitionInterval,
-			table.RetentionPeriod,
+			mTable.TenantID,
+			mTable.TenantColumn,
+			mTable.PartitionBy,
+			mTable.PartitionType,
+			mTable.PartitionCount,
+			mTable.PartitionInterval,
+			mTable.RetentionPeriod,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to upsert table config for %s: %w", table.Name, err)
@@ -207,8 +210,8 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 	// Create future partitions
 	for i := uint(0); i < tc.PartitionCount; i++ {
 		bounds := Bounds{
-			From: today.Add(time.Duration(i) * tc.PartitionInterval.Duration()),
-			To:   today.Add(time.Duration(i+1) * tc.PartitionInterval.Duration()),
+			From: today.Add(time.Duration(i) * tc.PartitionInterval),
+			To:   today.Add(time.Duration(i+1) * tc.PartitionInterval),
 		}
 
 		// Check if partition already exists
@@ -486,19 +489,21 @@ func (m *Manager) AddManagedTable(tc Table) error {
 		return err
 	}
 
+	mTable := tc.toManagedTable()
+
 	// Insert the new table configuration into the management table
 	ctx := context.Background()
 	res, err := m.db.ExecContext(ctx, upsertSQL,
 		ulid.Make().String(),
-		tc.Name,
+		mTable.TableName,
 		m.config.SchemaName,
-		strings.ToLower(tc.TenantId),
-		tc.TenantIdColumn,
-		tc.PartitionBy,
-		tc.PartitionType,
-		tc.PartitionCount,
-		tc.PartitionInterval,
-		tc.RetentionPeriod,
+		mTable.TenantID,
+		mTable.TenantColumn,
+		mTable.PartitionBy,
+		mTable.PartitionType,
+		mTable.PartitionCount,
+		mTable.PartitionInterval,
+		mTable.RetentionPeriod,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert new table config for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
@@ -579,7 +584,7 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 	for _, partitions := range partitionGroups {
 		p := partitions[0]
 
-		tableConfig := Table{
+		table := Table{
 			Name:              p.TableName,
 			Schema:            m.config.SchemaName,
 			TenantId:          p.TenantId,
@@ -591,23 +596,25 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 			RetentionPeriod:   tc.RetentionPeriod,
 		}
 
-		err := m.checkTableColumnsExist(ctx, tableConfig)
+		err := m.checkTableColumnsExist(ctx, table)
 		if err != nil {
 			return err
 		}
 
+		mTable := table.toManagedTable()
+
 		// Insert into partition management table
 		res, err := m.db.ExecContext(ctx, upsertSQL,
 			ulid.Make().String(),
-			tableConfig.Name,
-			tableConfig.Schema,
-			strings.ToLower(tableConfig.TenantId),
-			tableConfig.TenantIdColumn,
-			tableConfig.PartitionBy,
-			tableConfig.PartitionType,
-			tableConfig.PartitionCount,
-			tableConfig.PartitionInterval,
-			tableConfig.RetentionPeriod,
+			mTable.TableName,
+			mTable.SchemaName,
+			mTable.TenantID,
+			mTable.TenantColumn,
+			mTable.PartitionBy,
+			mTable.PartitionType,
+			mTable.PartitionCount,
+			mTable.PartitionInterval,
+			mTable.RetentionPeriod,
 		)
 		if err != nil {
 			m.logger.Error("failed to insert management entry",
@@ -633,7 +640,7 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 				"partition_count", len(partitions))
 
 			// Add to our list of new tables
-			addedTables = append(addedTables, tableConfig)
+			addedTables = append(addedTables, table)
 		}
 	}
 

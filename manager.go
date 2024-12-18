@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -128,32 +129,25 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 		return fmt.Errorf("failed to load existing managed tables: %w", err)
 	}
 
-	// Merge existing tables with new config tables
-	configTables := make(map[string]Table)
+	// Use a map to deduplicate tables based on name and tenant ID
+	uniqueTables := make(map[string]Table)
 
 	// Add existing tables first
 	for _, et := range existingTables {
 		te := et.toTable()
-
-		key := te.Name
-		if te.TenantId != "" {
-			key = fmt.Sprintf("%s_%s", te.Name, te.TenantId)
-		}
-		configTables[key] = te
+		key := generateTableKey(te.Name, te.TenantId)
+		uniqueTables[key] = te
 	}
 
 	// Add or update with new config tables
 	for _, nt := range config.Tables {
-		key := nt.Name
-		if nt.TenantId != "" {
-			key = fmt.Sprintf("%s_%s", nt.Name, nt.TenantId)
-		}
-		configTables[key] = nt
+		key := generateTableKey(nt.Name, nt.TenantId)
+		uniqueTables[key] = nt
 	}
 
 	// Convert back to slice
-	mergedTables := make([]Table, 0, len(configTables))
-	for _, table := range configTables {
+	mergedTables := make([]Table, 0, len(uniqueTables))
+	for _, table := range uniqueTables {
 		mergedTables = append(mergedTables, table)
 	}
 	m.config.Tables = mergedTables
@@ -481,17 +475,45 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
+// generateTableKey creates a unique key for a table based on its name and tenant ID
+func generateTableKey(tableName, tenantID string) string {
+	if tenantID != "" {
+		return strings.ToLower(fmt.Sprintf("%s_%s", tableName, tenantID))
+	}
+	return strings.ToLower(tableName)
+}
+
 // AddManagedTable adds a new managed table to the partition manager
 func (m *Manager) AddManagedTable(tc Table) error {
-	// Validate the new table configuration
 	if err := tc.Validate(); err != nil {
-		return err
+		return fmt.Errorf("invalid table configuration: %w", err)
 	}
 
+	// Use a map to deduplicate tables
+	uniqueTables := make(map[string]Table, len(m.config.Tables)+1)
+
+	// Add existing tables
+	for _, existing := range m.config.Tables {
+		key := generateTableKey(existing.Name, existing.TenantId)
+		uniqueTables[key] = existing
+	}
+
+	// Add or update new table
+	key := generateTableKey(tc.Name, tc.TenantId)
+	uniqueTables[key] = tc
+
+	// Convert back to slice
+	newTables := make([]Table, 0, len(uniqueTables))
+	for _, table := range uniqueTables {
+		newTables = append(newTables, table)
+	}
+	m.config.Tables = newTables
+
+	// Initialize the new table
+	ctx := context.Background()
 	mTable := tc.toManagedTable()
 
-	// Insert the new table configuration into the management table
-	ctx := context.Background()
+	// Insert or update configuration
 	res, err := m.db.ExecContext(ctx, upsertSQL,
 		ulid.Make().String(),
 		mTable.TableName,
@@ -505,25 +527,22 @@ func (m *Manager) AddManagedTable(tc Table) error {
 		mTable.RetentionPeriod,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to upsert new table config for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
+		return fmt.Errorf("failed to upsert table config: %w", err)
 	}
 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to get rows affected for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
+		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 
-	if rowsAffected < int64(1) {
-		return fmt.Errorf("failed to upsert new table config for %s (tenant id: %s)", tc.Name, tc.TenantId)
+	if rowsAffected < 1 {
+		return fmt.Errorf("failed to upsert table config")
 	}
 
 	// Create future partitions for the new table
 	if err = m.CreateFuturePartitions(ctx, tc); err != nil {
-		return fmt.Errorf("failed to create future partitions for %s (tenant id: %s), error: %w", tc.Name, tc.TenantId, err)
+		return fmt.Errorf("failed to create future partitions: %w", err)
 	}
-
-	// Update the manager's config
-	m.config.Tables = append(m.config.Tables, tc)
 
 	return nil
 }
@@ -565,24 +584,17 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 		return fmt.Errorf("failed to query unmanaged partitions: %w", err)
 	}
 
-	// Group partitions by base table and tenant
-	partitionGroups := make(map[string][]unManagedPartition)
-	for _, p := range unManagedPartitions {
-		var key string
+	// Use a map to deduplicate tables based on name and tenant ID
+	uniqueTables := make(map[string]Table)
 
-		if p.TenantId != "" {
-			key = fmt.Sprintf("%s_%s", p.TableName, p.TenantId)
-		}
-		partitionGroups[key] = append(partitionGroups[key], p)
+	// Add existing managed tables first
+	for _, existing := range m.config.Tables {
+		key := generateTableKey(existing.Name, existing.TenantId)
+		uniqueTables[key] = existing
 	}
 
-	// Keep track of newly added tables
-	var addedTables []Table
-
-	// For each group, create a management entry
-	for _, partitions := range partitionGroups {
-		p := partitions[0]
-
+	// Process unmanaged partitions
+	for _, p := range unManagedPartitions {
 		table := Table{
 			Name:              p.TableName,
 			Schema:            p.SchemaName,
@@ -635,16 +647,20 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 		if rowsAffected > 0 {
 			m.logger.Info("imported existing partitioned table",
 				"table", p.TableName,
-				"tenant", p.TenantId,
-				"partition_count", len(partitions))
+				"tenant", p.TenantId)
 
-			// Add to our list of new tables
-			addedTables = append(addedTables, table)
+			// Add to our map of unique tables
+			key := generateTableKey(table.Name, table.TenantId)
+			uniqueTables[key] = table
 		}
 	}
 
-	// Update the manager's config with all new tables
-	m.config.Tables = append(m.config.Tables, addedTables...)
+	// Convert map back to slice and update config
+	newTables := make([]Table, 0, len(uniqueTables))
+	for _, table := range uniqueTables {
+		newTables = append(newTables, table)
+	}
+	m.config.Tables = newTables
 
 	return nil
 }

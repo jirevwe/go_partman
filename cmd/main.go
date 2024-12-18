@@ -26,9 +26,7 @@ func main() {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	db := sqlx.NewDb(sqlDB, "pgx")
 
-	config := &partman.Config{
-		SampleRate: time.Second,
-	}
+	config := &partman.Config{}
 
 	clock := partman.NewRealClock()
 	manager, err := partman.NewAndStart(db, config, logger, clock)

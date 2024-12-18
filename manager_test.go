@@ -1837,3 +1837,182 @@ func TestManagerInitialization(t *testing.T) {
 		require.Equal(t, "744h0m0s", dbTable.RetentionPeriod)
 	})
 }
+
+func TestTableDeduplication(t *testing.T) {
+	t.Run("AddManagedTable deduplicates tables", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx := context.Background()
+		// Create test table with tenant support
+		_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+		require.NoError(t, err)
+		defer dropTestTable(t, ctx, db)
+
+		// Initial config with one table
+		initialTable := Table{
+			Name:              "sample",
+			Schema:            "test",
+			TenantId:          "tenant1",
+			TenantIdColumn:    "project_id",
+			PartitionType:     TypeRange,
+			PartitionBy:       "created_at",
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
+			PartitionCount:    2,
+		}
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(NewSlogLogger()),
+			WithConfig(&Config{
+				SampleRate: time.Second,
+				Tables:     []Table{initialTable},
+			}),
+			WithClock(NewSimulatedClock(time.Now())),
+		)
+		require.NoError(t, err)
+
+		// Add the same table again with different config
+		updatedTable := initialTable
+		updatedTable.PartitionCount = 5
+		err = manager.AddManagedTable(updatedTable)
+		require.NoError(t, err)
+
+		// Verify only one table exists with updated config
+		require.Equal(t, 1, len(manager.config.Tables))
+		require.Equal(t, uint(5), manager.config.Tables[0].PartitionCount)
+
+		// Add another table with same name but different tenant
+		newTenantTable := initialTable
+		newTenantTable.TenantId = "tenant2"
+		err = manager.AddManagedTable(newTenantTable)
+		require.NoError(t, err)
+
+		// Verify we now have exactly two tables
+		require.Equal(t, 2, len(manager.config.Tables))
+	})
+
+	t.Run("initialize deduplicates tables from DB and config", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx := context.Background()
+		// Create test table with tenant support
+		_, err := db.ExecContext(ctx, createTestTableWithTenantIdQuery)
+		require.NoError(t, err)
+		defer dropTestTable(t, ctx, db)
+
+		// Create management table
+		migrations := []string{
+			createSchema,
+			createManagementTable,
+			createUniqueIndex,
+		}
+		for _, migration := range migrations {
+			_, err := db.ExecContext(ctx, migration)
+			require.NoError(t, err)
+		}
+
+		// Insert existing table in DB
+		existingTable := Table{
+			Name:              "sample",
+			Schema:            "test",
+			TenantId:          "tenant1",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     "range",
+			PartitionInterval: time.Hour * 24,
+			PartitionCount:    5,
+			RetentionPeriod:   time.Hour * 24 * 31,
+		}
+		mTable := existingTable.toManagedTable()
+		_, err = db.ExecContext(ctx, upsertSQL,
+			ulid.Make().String(),
+			mTable.TableName,
+			mTable.SchemaName,
+			mTable.TenantID,
+			mTable.TenantColumn,
+			mTable.PartitionBy,
+			mTable.PartitionType,
+			mTable.PartitionCount,
+			mTable.PartitionInterval,
+			mTable.RetentionPeriod,
+		)
+		require.NoError(t, err)
+
+		// Create new manager with same table in config but different settings
+		configTable := existingTable
+		configTable.PartitionCount = 10
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(NewSlogLogger()),
+			WithConfig(&Config{
+				SampleRate: time.Second,
+				Tables:     []Table{configTable},
+			}),
+			WithClock(NewSimulatedClock(time.Now())),
+		)
+		require.NoError(t, err)
+
+		// Verify only one table exists with config taking precedence
+		require.Equal(t, 1, len(manager.config.Tables))
+		require.Equal(t, uint(10), manager.config.Tables[0].PartitionCount)
+	})
+
+	t.Run("ImportExistingPartitions deduplicates tables", func(t *testing.T) {
+		db, pool := setupTestDB(t)
+		defer cleanupTestDB(t, db, pool)
+
+		ctx := context.Background()
+		// Create test table with tenant support
+		createTestTable(t, ctx, db)
+		defer dropTestTable(t, ctx, db)
+
+		// Create initial manager with one table
+		initialTable := Table{
+			Name:              "sample",
+			Schema:            "test",
+			PartitionType:     TypeRange,
+			PartitionBy:       "created_at",
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
+			PartitionCount:    2,
+		}
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(NewSlogLogger()),
+			WithConfig(&Config{
+				SampleRate: time.Second,
+				Tables:     []Table{initialTable},
+			}),
+			WithClock(NewSimulatedClock(time.Now())),
+		)
+		require.NoError(t, err)
+
+		// Create some existing partitions for the same table
+		partitions := []string{
+			`CREATE TABLE test.sample_20240101 PARTITION OF test.sample FOR VALUES FROM ('2024-01-01') TO ('2024-01-02')`,
+		}
+		for _, partition := range partitions {
+			_, err = db.ExecContext(ctx, partition)
+			require.NoError(t, err)
+		}
+
+		// Import existing partitions
+		err = manager.ImportExistingPartitions(ctx, Table{
+			Schema:            "test",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
+			PartitionCount:    5, // Different count
+		})
+		require.NoError(t, err)
+
+		// Verify we still only have one table (deduplication worked)
+		require.Equal(t, 1, len(manager.config.Tables))
+		// Verify original config was preserved
+		require.Equal(t, uint(5), manager.config.Tables[0].PartitionCount)
+	})
+}

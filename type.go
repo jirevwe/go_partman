@@ -195,7 +195,7 @@ type Config struct {
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	if c.SampleRate == 0 {
-		return errors.New("sample-rate cannot be zero")
+		c.SampleRate = time.Minute
 	}
 
 	for i, table := range c.Tables {

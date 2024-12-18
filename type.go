@@ -255,8 +255,8 @@ func (tc *Table) toManagedTable() managedTable {
 	return managedTable{
 		TableName:         tc.Name,
 		SchemaName:        tc.Schema,
-		TenantID:          tc.TenantId,
-		TenantColumn:      strings.ToLower(tc.TenantIdColumn),
+		TenantID:          strings.ToLower(tc.TenantId),
+		TenantColumn:      tc.TenantIdColumn,
 		PartitionBy:       tc.PartitionBy,
 		PartitionType:     string(tc.PartitionType),
 		PartitionCount:    tc.PartitionCount,

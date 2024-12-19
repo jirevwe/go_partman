@@ -2,6 +2,12 @@
 
 A Go native implementation of PostgreSQL table partitioning management, inspired by pg_partman. This library helps you automatically manage and maintain partitioned tables in PostgreSQL databases.
 
+> Disclaimers: 
+> 1. This library is currently in alpha, hence the public APIs might change as development continues
+> 2. This library was built and is currently used to manage retention policies in [Convoy](https://github.com/frain-dev/convoy).
+> 3. It is currently behind a feature flag (I'll update this disclaimer once it's GA).
+> 4. This is the accompanying [pull request](https://github.com/frain-dev/convoy/pull/2194) if you want to see how it works. 
+
 ## Features
 
 - Automatic partition creation and management
@@ -87,8 +93,8 @@ config := partman.Config{
             PartitionType:     partman.TypeRange,
             PartitionBy:       "created_at",
             PartitionInterval: time.Hour * 24,
-		    PartitionCount:    10,
-		    RetentionPeriod:   time.Hour * 24 * 7,
+            PartitionCount:    10, 
+            RetentionPeriod:   time.Hour * 24 * 7,
         },
     },
 }

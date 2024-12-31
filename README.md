@@ -1,6 +1,6 @@
 # go_partman
 
-A Go native implementation of PostgreSQL table partitioning management, inspired by pg_partman. This library helps you automatically manage and maintain partitioned tables in PostgreSQL databases.
+A Go native implementation of PostgreSQL table partitioning management, inspired by [pg_partman](https://github.com/pgpartman/pg_partman). This library helps you automatically manage and maintain partitioned tables in PostgreSQL databases.
 
 > Disclaimers: 
 > 1. This library is currently in alpha, hence the public APIs might change as development continues

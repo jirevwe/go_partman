@@ -354,7 +354,7 @@ func TestManager(t *testing.T) {
 		t.Run("with tenant ID", func(t *testing.T) {
 			tableConfig := Table{
 				Name:        "sample",
-				TenantId:    "tenant1",
+				TenantId:    "TENANT1",
 				PartitionBy: "created_at",
 			}
 			name := manager.generatePartitionName(tableConfig, bounds)
@@ -394,7 +394,7 @@ func TestManager(t *testing.T) {
 		t.Run("with tenant ID", func(t *testing.T) {
 			tableConfig := Table{
 				Name:          "sample",
-				TenantId:      "tenant1",
+				TenantId:      "TENANT1",
 				Schema:        "test",
 				PartitionType: TypeRange,
 				PartitionBy:   "created_at",
@@ -411,7 +411,7 @@ func TestManager(t *testing.T) {
 
 			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, bounds)
 			require.NoError(t, err)
-			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.sample_tenant1_20240315 PARTITION OF test.sample FOR VALUES FROM ('tenant1', '2024-03-15') TO ('tenant1', '2024-03-16');")
+			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.sample_tenant1_20240315 PARTITION OF test.sample FOR VALUES FROM ('TENANT1', '2024-03-15') TO ('TENANT1', '2024-03-16');", sql)
 		})
 	})
 
@@ -459,7 +459,7 @@ func TestManager(t *testing.T) {
 		tableConfig := Table{
 			Name:              "sample",
 			Schema:            "test",
-			TenantId:          "tenant1",
+			TenantId:          "TENANT1",
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
@@ -710,7 +710,7 @@ func TestManager(t *testing.T) {
 				{
 					Name:              "sample",
 					Schema:            "test",
-					TenantId:          "tenant1",
+					TenantId:          "TENANT1",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
@@ -807,8 +807,8 @@ func TestManager(t *testing.T) {
 
 			// Create some existing partitions manually
 			partitions := []string{
-				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`,
-				`CREATE TABLE test.sample_tenant1_20240102 PARTITION OF test.sample FOR VALUES FROM ('tenant1', '2024-01-02') TO ('tenant1', '2024-01-03')`,
+				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`,
+				`CREATE TABLE test.sample_tenant1_20240102 PARTITION OF test.sample FOR VALUES FROM ('TENANT1', '2024-01-02') TO ('TENANT1', '2024-01-03')`,
 				`CREATE TABLE test.sample_tenant2_20240101 PARTITION OF test.sample FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
 			}
 
@@ -850,7 +850,7 @@ func TestManager(t *testing.T) {
 			err = db.QueryRowContext(ctx, `
 				SELECT EXISTS(
 					SELECT 1 FROM partman.partition_management 
-					WHERE tenant_id = 'tenant1' AND partition_interval = '24h0m0s'
+					WHERE tenant_id = 'TENANT1' AND partition_interval = '24h0m0s'
 				)`).Scan(&exists)
 			require.NoError(t, err)
 			require.True(t, exists)
@@ -878,7 +878,7 @@ func TestManager(t *testing.T) {
 			// Create an invalid partition (wrong naming format)
 			_, err = db.ExecContext(ctx, `
 				CREATE TABLE test.sample_invalid_format PARTITION OF test.sample 
-				FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`)
+				FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`)
 			require.NoError(t, err)
 
 			// Initialize manager
@@ -901,7 +901,8 @@ func TestManager(t *testing.T) {
 				PartitionCount:    10,
 				RetentionPeriod:   time.Hour * 24 * 31,
 			})
-			require.NoError(t, err)
+			require.Error(t, err)
+			require.ErrorContains(t, err, "parsing time \"\" as \"20060102\": cannot parse \"\" as \"2006\"")
 
 			// Verify no partitions were imported
 			var count int
@@ -925,10 +926,10 @@ func TestManager(t *testing.T) {
 			partitions := []string{
 				// Standard format
 				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample 
-				 FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`,
+				 FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`,
 				// Different month and day
 				`CREATE TABLE test.sample_tenant1_20241231 PARTITION OF test.sample 
-				 FOR VALUES FROM ('tenant1', '2024-12-31') TO ('tenant1', '2025-01-01')`,
+				 FOR VALUES FROM ('TENANT1', '2024-12-31') TO ('TENANT1', '2025-01-01')`,
 				// Another tenant
 				`CREATE TABLE test.sample_tenant2_20240101 PARTITION OF test.sample 
 				 FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
@@ -991,7 +992,7 @@ func TestManager(t *testing.T) {
 			// Create a partition
 			_, err = db.ExecContext(ctx, `
 				CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample 
-				FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`)
+				FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`)
 			require.NoError(t, err)
 
 			logger := NewSlogLogger()
@@ -1010,7 +1011,7 @@ func TestManager(t *testing.T) {
 					partition_by, partition_type, partition_interval,
 					retention_period, partition_count
 				) VALUES (
-					$1, 'sample', 'test', 'tenant1', 'project_id',
+					$1, 'sample', 'test', 'TENANT1', 'project_id',
 					'created_at', 'range', '24h', '720h', 10
 				)`, ulid.Make().String())
 			require.NoError(t, err)
@@ -1049,10 +1050,10 @@ func TestManager(t *testing.T) {
 			partitions := []string{
 				// Valid partition
 				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.sample 
-				 FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`,
+				 FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`,
 				// Invalid format but valid partition
 				`CREATE TABLE test.sample_invalid_tenant1 PARTITION OF test.sample 
-				 FOR VALUES FROM ('tenant1', '2024-01-02') TO ('tenant1', '2024-01-03')`,
+				 FOR VALUES FROM ('TENANT1', '2024-01-02') TO ('TENANT1', '2024-01-03')`,
 				// Another valid partition
 				`CREATE TABLE test.sample_tenant2_20240101 PARTITION OF test.sample 
 				 FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
@@ -1081,7 +1082,8 @@ func TestManager(t *testing.T) {
 				PartitionCount:    10,
 				RetentionPeriod:   time.Hour * 24 * 31,
 			})
-			require.NoError(t, err)
+			require.Error(t, err)
+			require.ErrorContains(t, err, "parsing time \"\" as \"20060102\": cannot parse \"\" as \"2006\"")
 
 			// Verify only valid partitions were imported
 			var count int
@@ -1094,7 +1096,7 @@ func TestManager(t *testing.T) {
 			err = db.QueryRowContext(ctx, `
 				SELECT EXISTS(
 					SELECT 1 FROM partman.partition_management 
-					WHERE tenant_id IN ('tenant1', 'tenant2')
+					WHERE tenant_id IN ('TENANT1', 'tenant2')
 				)`).Scan(&exists)
 			require.NoError(t, err)
 			require.True(t, exists)
@@ -1123,7 +1125,7 @@ func TestManager(t *testing.T) {
 			`)
 			require.NoError(t, err)
 			defer func() {
-				_, err := db.ExecContext(ctx, `
+				_, err = db.ExecContext(ctx, `
 					DROP TABLE IF EXISTS test.sample_with_tenant;
 					DROP TABLE IF EXISTS test.sample_no_tenant;
 				`)
@@ -1134,7 +1136,7 @@ func TestManager(t *testing.T) {
 			partitions := []string{
 				// Tenant partitions
 				`CREATE TABLE if not exists test.sample_with_tenant_tenant1_20240101 PARTITION OF test.sample_with_tenant
-				 FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`,
+				 FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`,
 				// Non-tenant partitions
 				`CREATE TABLE if not exists test.sample_no_tenant_20240101 PARTITION OF test.sample_no_tenant
 				 FOR VALUES FROM ('2024-01-01') TO ('2024-01-02')`,
@@ -1185,7 +1187,7 @@ func TestManager(t *testing.T) {
 
 			for _, m := range managedTables {
 				if m.TableName == "sample_with_tenant" {
-					require.Equal(t, "tenant1", m.TenantID)
+					require.Equal(t, "TENANT1", m.TenantID)
 				} else {
 					require.Empty(t, m.TenantID)
 				}
@@ -1429,7 +1431,7 @@ func TestNewManager(t *testing.T) {
 				{
 					Name:              "sample",
 					Schema:            "test",
-					TenantId:          "tenant1",
+					TenantId:          "TENANT1",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
@@ -1534,7 +1536,7 @@ func TestManagerConfigUpdate(t *testing.T) {
 		initialTable := Table{
 			Name:              "sample",
 			Schema:            "test",
-			TenantId:          "tenant1",
+			TenantId:          "TENANT1",
 			TenantIdColumn:    "project_id",
 			PartitionType:     TypeRange,
 			PartitionBy:       "created_at",
@@ -1614,6 +1616,7 @@ func TestManagerConfigUpdate(t *testing.T) {
 			RetentionPeriod:   time.Hour * 24 * 7,
 			PartitionCount:    2,
 		})
+		t.Log(err)
 		require.NoError(t, err)
 
 		// Verify config includes imported tables
@@ -1645,7 +1648,7 @@ func TestManagerInitialization(t *testing.T) {
 			{
 				Name:              "sample",
 				Schema:            "test",
-				TenantId:          "tenant1",
+				TenantId:          "TENANT1",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
 				PartitionType:     "range",
@@ -1736,7 +1739,7 @@ func TestManagerInitialization(t *testing.T) {
 		}
 
 		// Verify existing tables were loaded with correct configuration
-		tenant1Table := findTable(manager.config.Tables, "tenant1")
+		tenant1Table := findTable(manager.config.Tables, "TENANT1")
 		require.NotNil(t, tenant1Table)
 		require.Equal(t, uint(5), tenant1Table.PartitionCount)
 		require.Equal(t, time.Hour*24*31, tenant1Table.RetentionPeriod)
@@ -1779,7 +1782,7 @@ func TestManagerInitialization(t *testing.T) {
 			ulid.Make().String(),
 			"sample",
 			"test",
-			"tenant1",
+			"TENANT1",
 			"project_id",
 			"created_at",
 			"range",
@@ -1796,7 +1799,7 @@ func TestManagerInitialization(t *testing.T) {
 				{
 					Name:              "sample",
 					Schema:            "test",
-					TenantId:          "tenant1", // Same tenant as existing
+					TenantId:          "TENANT1", // Same tenant as existing
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     TypeRange,
@@ -1819,7 +1822,7 @@ func TestManagerInitialization(t *testing.T) {
 		// Verify that new config overrode existing config
 		require.Equal(t, 1, len(manager.config.Tables))
 		table := manager.config.Tables[0]
-		require.Equal(t, "tenant1", table.TenantId)
+		require.Equal(t, "TENANT1", table.TenantId)
 		require.Equal(t, uint(10), table.PartitionCount)
 		require.Equal(t, time.Hour*24*31, table.RetentionPeriod)
 
@@ -1830,7 +1833,7 @@ func TestManagerInitialization(t *testing.T) {
 		}
 		err = db.GetContext(ctx, &dbTable,
 			"SELECT partition_count, retention_period FROM partman.partition_management WHERE tenant_id = $1",
-			"tenant1",
+			"TENANT1",
 		)
 		require.NoError(t, err)
 		require.Equal(t, 10, dbTable.PartitionCount)
@@ -1853,7 +1856,7 @@ func TestTableDeduplication(t *testing.T) {
 		initialTable := Table{
 			Name:              "sample",
 			Schema:            "test",
-			TenantId:          "tenant1",
+			TenantId:          "TENANT1",
 			TenantIdColumn:    "project_id",
 			PartitionType:     TypeRange,
 			PartitionBy:       "created_at",
@@ -1918,7 +1921,7 @@ func TestTableDeduplication(t *testing.T) {
 		existingTable := Table{
 			Name:              "sample",
 			Schema:            "test",
-			TenantId:          "tenant1",
+			TenantId:          "TENANT1",
 			TenantIdColumn:    "project_id",
 			PartitionBy:       "created_at",
 			PartitionType:     "range",

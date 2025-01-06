@@ -2,6 +2,7 @@ package partman
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -421,9 +422,9 @@ func (m *Manager) generatePartitionName(tc Table, b Bounds) string {
 	datePart := b.From.Format(DateNoHyphens)
 
 	if len(tc.TenantId) > 0 {
-		return fmt.Sprintf("%s_%s_%s", tc.Name, tc.TenantId, datePart)
+		return strings.ToLower(fmt.Sprintf("%s_%s_%s", tc.Name, tc.TenantId, datePart))
 	}
-	return fmt.Sprintf("%s_%s", tc.Name, datePart)
+	return strings.ToLower(fmt.Sprintf("%s_%s", tc.Name, datePart))
 }
 
 func extractDateFromString(input string) (string, error) {
@@ -549,34 +550,62 @@ func (m *Manager) AddManagedTable(tc Table) error {
 
 // ImportExistingPartitions scans the database for existing partitions and adds them to the partition management table
 func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error {
+	errString := make([]string, 0)
+
 	// Query to get all tables that look like partitions but aren't yet managed
 	const findUnmanagedPartitionsQuery = `
-	with partition_info as (
-		SELECT
-			c.relname AS tablename,
-			n.nspname AS schemaname,
-			split_part(p.partrelid::regclass::TEXT, '.', 2) AS parentname
-		FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		JOIN pg_inherits i ON i.inhrelid = c.oid
-		JOIN pg_partitioned_table p ON p.partrelid = i.inhparent
-		WHERE n.nspname = $1
-		AND c.relname ~ '.*_\d{8}$'
-	), extract_parts as (
-		select *, split_part(tablename, parentname||'_', 2) as tenantid from partition_info
-	) select
-	      parentname,
-	      schemaname,
-	      case when (select pg_catalog.array_length(regexp_matches(tenantid, '_\d{8}$'), 1)) > 0 then
-	          regexp_replace(tenantid, '_\d{8}$', '')
-	          else ''
-		  end as tenantid
-	  from extract_parts;`
+	WITH bounds AS (
+	SELECT
+		nmsp_parent.nspname AS parent_schema,
+		parent.relname AS parent_table,
+		nmsp_child.nspname AS partition_schema,
+		child.relname AS partition_name,
+		pg_get_expr(child.relpartbound, child.oid) AS partition_expression
+	FROM pg_inherits
+			 JOIN pg_class parent ON pg_inherits.inhparent = parent.oid
+			 JOIN pg_class child ON pg_inherits.inhrelid = child.oid
+			 JOIN pg_namespace nmsp_parent ON nmsp_parent.oid = parent.relnamespace
+			 JOIN pg_namespace nmsp_child ON nmsp_child.oid = child.relnamespace
+	WHERE parent.relkind = 'p'  AND nmsp_parent.nspname = $1
+	),
+		 parsed_values AS (
+			 SELECT
+				 *,
+				 regexp_matches(partition_expression, 'FROM \(([^)]+)\) TO \(([^)]+)\)', 'g') as extracted_values,
+				 (regexp_matches(partition_expression, 'FROM \(([^)]+)\)', 'g'))[1] as from_values,
+				 (regexp_matches(partition_expression, 'TO \(([^)]+)\)', 'g'))[1] as to_values
+			 FROM bounds
+		 )
+	SELECT
+		parent_schema,
+		parent_table,
+		partition_name,
+		partition_expression,
+		CASE
+			WHEN from_values LIKE '%,%' THEN replace(split_part(from_values, ', ', 1), '''', '')
+			END as tenant_from,
+		(CASE
+			WHEN from_values LIKE '%,%' THEN split_part(from_values, ', ', 2)
+			ELSE from_values
+			END)::TIMESTAMP as timestamp_from,
+		CASE
+			WHEN to_values LIKE '%,%' THEN replace(split_part(to_values, ', ', 1), '''', '')
+			END as tenant_to,
+		(CASE
+			WHEN to_values LIKE '%,%' THEN split_part(to_values, ', ', 2)
+			ELSE to_values
+			END)::TIMESTAMP as timestamp_to
+	FROM parsed_values;`
 
 	type unManagedPartition struct {
-		TenantId   string `db:"tenantid"`
-		SchemaName string `db:"schemaname"`
-		TableName  string `db:"parentname"`
+		TenantFrom    *string `db:"tenant_from"`
+		TenantTo      *string `db:"tenant_to"`
+		TimestampFrom string  `db:"timestamp_from"`
+		TimestampTo   string  `db:"timestamp_to"`
+		PartitionName string  `db:"partition_name"`
+		PartitionExpr string  `db:"partition_expression"`
+		ParentSchema  string  `db:"parent_schema"`
+		ParentTable   string  `db:"parent_table"`
 	}
 
 	var unManagedPartitions []unManagedPartition
@@ -595,10 +624,29 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 
 	// Process unmanaged partitions
 	for _, p := range unManagedPartitions {
+		// check to see if the date part exists
+		datePart, err := extractDateFromString(p.PartitionName)
+		if err != nil {
+			errString = append(errString, err.Error())
+			continue
+		}
+
+		_, err = time.Parse(DateNoHyphens, datePart)
+		if err != nil {
+			errString = append(errString, err.Error())
+			continue
+		}
+
+		parts := strings.Split(p.PartitionName, "_")
+		if len(parts) < 2 {
+			errString = append(errString, fmt.Sprintf("invalid partition name: %s", p.PartitionName))
+			continue
+		}
+
 		table := Table{
-			Name:              p.TableName,
-			Schema:            p.SchemaName,
-			TenantId:          p.TenantId,
+			Name:              p.ParentTable,
+			Schema:            p.ParentSchema,
+			TenantId:          nullOrZero(p.TenantFrom),
 			TenantIdColumn:    tc.TenantIdColumn,
 			PartitionBy:       tc.PartitionBy,
 			PartitionType:     tc.PartitionType,
@@ -607,9 +655,10 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 			RetentionPeriod:   tc.RetentionPeriod,
 		}
 
-		err := m.checkTableColumnsExist(ctx, table)
+		err = m.checkTableColumnsExist(ctx, table)
 		if err != nil {
-			return err
+			errString = append(errString, err.Error())
+			continue
 		}
 
 		mTable := table.toManagedTable()
@@ -628,26 +677,28 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 			mTable.RetentionPeriod,
 		)
 		if err != nil {
-			m.logger.Error("failed to insert management entry",
-				"table", p.TableName,
-				"tenant", p.TenantId,
+			m.logger.Error("failed to insert management entry ",
+				"table", p.ParentTable,
+				"tenant", p.TenantFrom,
 				"error", err)
-			return err
+			errString = append(errString, err.Error())
+			continue
 		}
 
 		rowsAffected, err := res.RowsAffected()
 		if err != nil {
-			m.logger.Error("failed to get rows affected",
-				"table", p.TableName,
-				"tenant", p.TenantId,
+			m.logger.Error("failed to get rows affected ",
+				"table", p.ParentTable,
+				"tenant", p.TenantFrom,
 				"error", err)
-			return err
+			errString = append(errString, err.Error())
+			continue
 		}
 
 		if rowsAffected > 0 {
-			m.logger.Info("imported existing partitioned table",
-				"table", p.TableName,
-				"tenant", p.TenantId)
+			m.logger.Info("imported existing partitioned table ",
+				"table ", p.ParentTable,
+				"tenant ", p.TenantFrom)
 
 			// Add to our map of unique tables
 			key := generateTableKey(table.Name, table.TenantId)
@@ -662,5 +713,15 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 	}
 	m.config.Tables = newTables
 
+	if len(errString) > 0 {
+		return errors.New(strings.Join(errString, "; "))
+	}
 	return nil
+}
+
+func nullOrZero(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

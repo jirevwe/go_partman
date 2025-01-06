@@ -5,7 +5,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -255,7 +254,7 @@ func (tc *Table) toManagedTable() managedTable {
 	return managedTable{
 		TableName:         tc.Name,
 		SchemaName:        tc.Schema,
-		TenantID:          strings.ToLower(tc.TenantId),
+		TenantID:          tc.TenantId,
 		TenantColumn:      tc.TenantIdColumn,
 		PartitionBy:       tc.PartitionBy,
 		PartitionType:     string(tc.PartitionType),

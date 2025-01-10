@@ -358,7 +358,7 @@ func TestManager(t *testing.T) {
 				PartitionBy: "created_at",
 			}
 			name := manager.generatePartitionName(tableConfig, bounds)
-			require.Equal(t, "sample_tenant1_20240315", name)
+			require.Equal(t, "sample_TENANT1_20240315", name)
 		})
 	})
 
@@ -407,11 +407,11 @@ func TestManager(t *testing.T) {
 			}
 
 			partitionName := manager.generatePartitionName(tableConfig, bounds)
-			require.Equal(t, "sample_tenant1_20240315", partitionName)
+			require.Equal(t, "sample_TENANT1_20240315", partitionName)
 
 			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, bounds)
 			require.NoError(t, err)
-			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.sample_tenant1_20240315 PARTITION OF test.sample FOR VALUES FROM ('TENANT1', '2024-03-15') TO ('TENANT1', '2024-03-16');", sql)
+			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.sample_TENANT1_20240315 PARTITION OF test.sample FOR VALUES FROM ('TENANT1', '2024-03-15') TO ('TENANT1', '2024-03-16');", sql)
 		})
 	})
 

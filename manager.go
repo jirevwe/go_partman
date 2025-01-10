@@ -422,9 +422,9 @@ func (m *Manager) generatePartitionName(tc Table, b Bounds) string {
 	datePart := b.From.Format(DateNoHyphens)
 
 	if len(tc.TenantId) > 0 {
-		return strings.ToLower(fmt.Sprintf("%s_%s_%s", tc.Name, tc.TenantId, datePart))
+		return fmt.Sprintf("%s_%s_%s", tc.Name, tc.TenantId, datePart)
 	}
-	return strings.ToLower(fmt.Sprintf("%s_%s", tc.Name, datePart))
+	return fmt.Sprintf("%s_%s", tc.Name, datePart)
 }
 
 func extractDateFromString(input string) (string, error) {
@@ -479,9 +479,9 @@ func (m *Manager) Stop() {
 // generateTableKey creates a unique key for a table based on its name and tenant ID
 func generateTableKey(tableName, tenantID string) string {
 	if tenantID != "" {
-		return strings.ToLower(fmt.Sprintf("%s_%s", tableName, tenantID))
+		return fmt.Sprintf("%s_%s", tableName, tenantID)
 	}
-	return strings.ToLower(tableName)
+	return tableName
 }
 
 // AddManagedTable adds a new managed table to the partition manager

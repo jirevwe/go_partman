@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"log"
+	"net/http"
+	"time"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/jirevwe/go_partman"
+	partman "github.com/jirevwe/go_partman"
 	"github.com/jmoiron/sqlx"
-	"log"
-	"time"
 )
 
 func main() {
@@ -52,5 +54,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	time.Sleep(30 * time.Second)
+	// Start the HTTP server
+	err = http.ListenAndServe(":8080", partman.UIHandler())
+	if err != nil {
+		log.Fatal(err)
+	}
 }

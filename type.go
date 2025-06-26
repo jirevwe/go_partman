@@ -312,9 +312,18 @@ func (m *managedTable) toTable() Table {
 }
 
 type uiPartitionInfo struct {
-	Name    string `json:"name"`
-	Size    string `json:"size"`
-	Rows    int64  `json:"rows"`
-	Range   string `json:"range"`
-	Created string `json:"created"`
+	Name      string `json:"name" db:"name"`
+	Size      string `json:"size" db:"size"`
+	Rows      int64  `json:"rows" db:"rows"`
+	Range     string `json:"range" db:"range"`
+	Created   string `json:"created" db:"created"`
+	SizeBytes int64  `json:"size_bytes" db:"size_bytes"`
+}
+
+type uiParentTableInfo struct {
+	Name           string `json:"name" db:"name"`
+	TotalSize      string `json:"total_size" db:"total_size"`
+	TotalRows      int64  `json:"total_rows" db:"total_rows"`
+	PartitionCount int    `json:"partition_count" db:"partition_count"`
+	TotalSizeBytes int64  `json:"total_size_bytes" db:"total_size_bytes"`
 }

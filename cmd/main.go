@@ -31,7 +31,22 @@ func main() {
 	manager, err := partman.NewManager(
 		partman.WithDB(db),
 		partman.WithLogger(logger),
-		partman.WithConfig(&partman.Config{SampleRate: time.Second}),
+		partman.WithConfig(&partman.Config{
+			SampleRate: time.Second,
+			Tables: []partman.Table{
+				{
+					Name:              "delivery_attempts",
+					Schema:            "convoy",
+					TenantId:          "tenant1",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     partman.TypeRange,
+					PartitionInterval: time.Hour * 24,
+					PartitionCount:    10,
+					RetentionPeriod:   time.Hour * 24 * 7,
+				},
+			},
+		}),
 		partman.WithClock(partman.NewRealClock()),
 	)
 	if err != nil {
@@ -57,6 +72,8 @@ func main() {
 	// }
 
 	// Start the HTTP server
+	log.Println("Starting server on :8080")
+	log.Println("UI available at: http://localhost:8080/")
 	err = http.ListenAndServe(":8080", partman.UIHandler(manager))
 	if err != nil {
 		log.Fatal(err)

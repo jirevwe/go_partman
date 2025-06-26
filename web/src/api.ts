@@ -1,4 +1,9 @@
-import { Partition } from "./types.ts";
+import {
+  Partition,
+  ParentTableInfo,
+  TablesResponse,
+  PartitionsResponse,
+} from "./types.ts";
 
 // Default to localhost in development can be overridden by environment variable
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
@@ -46,13 +51,22 @@ class ApiService {
   }
 
   async getTables(): Promise<ApiResponse<string[]>> {
-    return this.fetchWithError<string[]>("/api/tables");
+    const response = await this.fetchWithError<TablesResponse>("/api/tables");
+    if (response.data) {
+      return { data: response.data.tables };
+    }
+    return { error: response.error };
   }
 
-  async getPartitions(tableName: string): Promise<ApiResponse<Partition[]>> {
-    return this.fetchWithError<Partition[]>(
-      `/api/partitions?table=${tableName}`
-    );
+  async getPartitions(
+    tableName: string,
+    schema?: string
+  ): Promise<ApiResponse<PartitionsResponse>> {
+    let endpoint = `/api/partitions?table=${tableName}`;
+    if (schema) {
+      endpoint += `&schema=${schema}`;
+    }
+    return this.fetchWithError<PartitionsResponse>(endpoint);
   }
 }
 

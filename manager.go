@@ -744,3 +744,12 @@ func (m *Manager) GetPartitions(ctx context.Context, schema, tableName string) (
 	}
 	return partitions, nil
 }
+
+func (m *Manager) GetParentTableInfo(ctx context.Context, schema, tableName string) (*uiParentTableInfo, error) {
+	var tableInfo uiParentTableInfo
+	err := m.db.GetContext(ctx, &tableInfo, getParentTableInfoQuery, schema, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get parent table info: %w", err)
+	}
+	return &tableInfo, nil
+}

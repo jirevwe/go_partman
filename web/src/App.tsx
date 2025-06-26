@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Database, Table2, Settings2 } from 'lucide-react';
+import { Database, Table2, Settings2, BarChart3, HardDrive, Calendar } from 'lucide-react';
 import { apiService } from './api';
-import { Partition } from "./types.ts";
+import { Partition, ParentTableInfo } from "./types.ts";
 
 // interface ApiError {
 //   message: string;
@@ -11,6 +11,7 @@ function App() {
   const [selectedTable, setSelectedTable] = useState<string>('');
   const [tables, setTables] = useState<string[]>([]);
   const [partitions, setPartitions] = useState<Partition[]>([]);
+  const [parentTableInfo, setParentTableInfo] = useState<ParentTableInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,13 +54,30 @@ function App() {
         throw new Error(error);
       }
       if (data) {
-        setPartitions(data);
+        setPartitions(data.partitions);
+        setParentTableInfo(data.parent_table || null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch partitions');
     } finally {
       setLoading(false);
     }
+  };
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const formatNumber = (num: number): string => {
+    // Display "0" for negative numbers (which indicate empty/unanalyzed tables in PostgreSQL)
+    if (num < 0) {
+      return "0";
+    }
+    return new Intl.NumberFormat().format(num);
   };
 
   if (error) {
@@ -130,8 +148,54 @@ function App() {
               </div>
             </div>
 
+            {/* Parent Table Summary */}
+            {parentTableInfo && (
+              <div className="bg-white shadow-sm rounded-lg border border-gray-200 mb-6">
+                <div className="px-6 py-4 border-b border-gray-200">
+                  <h3 className="text-lg font-medium text-gray-900">Table Summary</h3>
+                </div>
+                <div className="px-6 py-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="flex items-center space-x-3">
+                      <HardDrive className="h-5 w-5 text-blue-500" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Total Size</p>
+                        <p className="text-sm text-gray-500">{parentTableInfo.total_size}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <BarChart3 className="h-5 w-5 text-green-500" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Total Rows</p>
+                        <p className="text-sm text-gray-500">{formatNumber(parentTableInfo.total_rows)}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <Table2 className="h-5 w-5 text-purple-500" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Partitions</p>
+                        <p className="text-sm text-gray-500">{parentTableInfo.partition_count}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <Calendar className="h-5 w-5 text-orange-500" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Avg Size/Partition</p>
+                        <p className="text-sm text-gray-500">
+                          {formatBytes(parentTableInfo.total_size_bytes / Math.max(parentTableInfo.partition_count, 1))}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Partitions table */}
             <div className="bg-white shadow-sm rounded-lg border border-gray-200">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <h3 className="text-lg font-medium text-gray-900">Partition Details</h3>
+              </div>
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
@@ -172,13 +236,20 @@ function App() {
                           {partition.name}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {partition.size}
+                          <div>
+                            <div>{partition.size}</div>
+                            <div className="text-xs text-gray-400">
+                              {formatBytes(partition.size_bytes)}
+                            </div>
+                          </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {partition.rows.toLocaleString()}
+                          {formatNumber(partition.rows)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {partition.range}
+                          <div className="max-w-xs truncate" title={partition.range}>
+                            {partition.range}
+                          </div>
                         </td>
                         <td className="px-6 py-4 text-right whitespace-nowrap text-sm text-gray-500">
                           {partition.created}

@@ -32,7 +32,7 @@ export default function App() {
       if (data) {
         setTables(data);
         if (data.length > 0) {
-          setSelectedTable(data[0]); // Select first table by default
+          setSelectedTable(data[0]); // Select the first table by default
         }
       }
     } catch (err) {
@@ -191,38 +191,43 @@ export default function App() {
                       Partition Name
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Size
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Rows
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Range
+                      Size
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Created
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Partition Range
                     </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {loading ? (
                     <tr>
-                      <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
+                      <td colSpan={4} className="px-6 py-4 text-center text-gray-500">
                         Loading partitions...
                       </td>
                     </tr>
                   ) : partitions.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
+                      <td colSpan={4} className="px-6 py-4 text-center text-gray-500">
                         No partitions found
                       </td>
                     </tr>
                   ) : (
                     partitions.map((partition) => (
                       <tr key={partition.name} className="hover:bg-gray-50">
+                        {/* partition name */}
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                           {partition.name}
                         </td>
+
+                        {/* row count */}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {formatNumber(partition.rows)}
+                        </td>
+
+                        {/* partition size */}
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           <div>
                             <div>{partition.size}</div>
@@ -231,16 +236,12 @@ export default function App() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {formatNumber(partition.rows)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          <div className="max-w-xs truncate" title={partition.range}>
+
+                        {/* partition range */}
+                        <td className="px-6 py-4 text-sm text-gray-500">
+                          <div className="break-words">
                             {partition.range}
                           </div>
-                        </td>
-                        <td className="px-6 py-4 text-right whitespace-nowrap text-sm text-gray-500">
-                          {partition.created}
                         </td>
                       </tr>
                     ))

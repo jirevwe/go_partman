@@ -310,3 +310,11 @@ func (m *managedTable) toTable() Table {
 		PartitionInterval: time.Duration(m.PartitionInterval),
 	}
 }
+
+type uiPartitionInfo struct {
+	Name    string `json:"name"`
+	Size    string `json:"size"`
+	Rows    int64  `json:"rows"`
+	Range   string `json:"range"`
+	Created string `json:"created"`
+}

@@ -28,10 +28,12 @@ func main() {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	db := sqlx.NewDb(sqlDB, "pgx")
 
-	config := &partman.Config{}
-
-	clock := partman.NewRealClock()
-	manager, err := partman.NewAndStart(db, config, logger, clock)
+	manager, err := partman.NewManager(
+		partman.WithDB(db),
+		partman.WithLogger(logger),
+		partman.WithConfig(&partman.Config{SampleRate: time.Second}),
+		partman.WithClock(partman.NewRealClock()),
+	)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -50,12 +52,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err = manager.Start(context.Background()); err != nil {
-		log.Fatal(err)
-	}
+	// if err = manager.Start(context.Background()); err != nil {
+	// 	log.Fatal(err)
+	// }
 
 	// Start the HTTP server
-	err = http.ListenAndServe(":8080", partman.UIHandler())
+	err = http.ListenAndServe(":8080", partman.UIHandler(manager))
 	if err != nil {
 		log.Fatal(err)
 	}

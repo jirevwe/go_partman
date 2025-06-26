@@ -81,3 +81,30 @@ SELECT
     partition_interval,
     retention_period
 FROM partman.partition_management;`
+
+var getPartitionDetailsQuery = `
+WITH partition_info AS (
+    SELECT
+        schemaname,
+        tablename,
+        pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(tablename)) as size_bytes,
+        (SELECT reltuples::bigint FROM pg_class WHERE oid = (quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass) as estimated_rows,
+        pg_get_expr(c.relpartbound, c.oid) as partition_expression,
+        c.relcreated as created_at
+    FROM pg_tables t
+    JOIN pg_class c ON c.relname = t.tablename
+    WHERE schemaname = 'convoy' AND tablename LIKE 'delivery_attempts'
+)
+SELECT
+    tablename as name,
+    pg_size_pretty(size_bytes) as size,
+    estimated_rows as rows,
+    partition_expression as range,
+    to_char(created_at, 'YYYY-MM-DD') as created
+FROM partition_info
+ORDER BY tablename;`
+
+var getManagedTablesListQuery = `
+SELECT DISTINCT table_name 
+FROM partman.partition_management 
+ORDER BY table_name;`

@@ -725,3 +725,22 @@ func nullOrZero(s *string) string {
 	}
 	return *s
 }
+
+func (m *Manager) GetManagedTables(ctx context.Context) ([]string, error) {
+	var tables []string
+	err := m.db.SelectContext(ctx, &tables, getManagedTablesListQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get managed tables: %w", err)
+	}
+	return tables, nil
+}
+
+func (m *Manager) GetPartitions(ctx context.Context, schema, tableName string) ([]uiPartitionInfo, error) {
+	pattern := fmt.Sprintf("%s_%%", tableName)
+	var partitions []uiPartitionInfo
+	err := m.db.SelectContext(ctx, &partitions, getPartitionDetailsQuery, schema, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get partitions: %w", err)
+	}
+	return partitions, nil
+}

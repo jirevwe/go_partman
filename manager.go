@@ -197,15 +197,16 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 	return nil
 }
 
+// Restore CreateFuturePartitions to use the original logic, but peg all timestamps to UTC
 func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 	// Determine start time for new partitions
-	today := m.clock.Now()
+	today := m.clock.Now().UTC()
 
 	// Create future partitions
 	for i := uint(0); i < tc.PartitionCount; i++ {
 		bounds := Bounds{
-			From: today.Add(time.Duration(i) * tc.PartitionInterval),
-			To:   today.Add(time.Duration(i+1) * tc.PartitionInterval),
+			From: today.Add(time.Duration(i) * tc.PartitionInterval).UTC(),
+			To:   today.Add(time.Duration(i+1) * tc.PartitionInterval).UTC(),
 		}
 
 		// Check if partition already exists
@@ -384,14 +385,14 @@ func (m *Manager) generateRangePartitionSQL(name string, tc Table, b Bounds) str
 		return fmt.Sprintf(generatePartitionWithTenantIdQuery,
 			tc.Schema, name,
 			tc.Schema, tc.Name,
-			tc.TenantId, b.From.Format(time.DateOnly),
-			tc.TenantId, b.To.Format(time.DateOnly))
+			tc.TenantId, b.From.UTC().Format(time.DateOnly),
+			tc.TenantId, b.To.UTC().Format(time.DateOnly))
 	}
 	return fmt.Sprintf(generatePartitionQuery,
 		tc.Schema, name,
 		tc.Schema, tc.Name,
-		b.From.Format(time.DateOnly),
-		b.To.Format(time.DateOnly))
+		b.From.UTC().Format(time.DateOnly),
+		b.To.UTC().Format(time.DateOnly))
 }
 
 func (m *Manager) checkTableColumnsExist(ctx context.Context, tc Table) error {
@@ -420,8 +421,9 @@ func (m *Manager) checkTableColumnsExist(ctx context.Context, tc Table) error {
 	return nil
 }
 
+// Update partition name and SQL formatting to use UTC
 func (m *Manager) generatePartitionName(tc Table, b Bounds) string {
-	datePart := b.From.Format(DateNoHyphens)
+	datePart := b.From.UTC().Format(DateNoHyphens)
 
 	if len(tc.TenantId) > 0 {
 		return fmt.Sprintf("%s_%s_%s", tc.Name, tc.TenantId, datePart)

@@ -60,9 +60,9 @@ WHERE schemaname = $1 AND tablename ILIKE $2;`
 
 var dropPartition = `DROP TABLE IF EXISTS %s.%s;`
 
-var generatePartitionQuery = `CREATE TABLE IF NOT EXISTS %s.%s PARTITION OF %s.%s FOR VALUES FROM ('%s') TO ('%s');`
+var generatePartitionQuery = `CREATE TABLE IF NOT EXISTS %s.%s PARTITION OF %s.%s FOR VALUES FROM ('%s 00:00:00+00'::timestamptz) TO ('%s 00:00:00+00'::timestamptz);`
 
-var generatePartitionWithTenantIdQuery = `CREATE TABLE IF NOT EXISTS %s.%s PARTITION OF %s.%s FOR VALUES FROM ('%s', '%s') TO ('%s', '%s');`
+var generatePartitionWithTenantIdQuery = `CREATE TABLE IF NOT EXISTS %s.%s PARTITION OF %s.%s FOR VALUES FROM ('%s', '%s 00:00:00+00'::timestamptz) TO ('%s', '%s 00:00:00+00'::timestamptz);`
 
 var checkColumnExists = `
 SELECT EXISTS (SELECT 1 

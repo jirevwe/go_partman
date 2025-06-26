@@ -1,3 +1,5 @@
+set timezone TO 'GMT';
+
 -- Create the parent table
 CREATE TABLE IF NOT EXISTS convoy.user_logs (
     id VARCHAR NOT NULL,
@@ -12,23 +14,23 @@ CREATE TABLE IF NOT EXISTS convoy.user_logs (
 -- Create partitions for user_logs
 CREATE TABLE IF NOT EXISTS convoy.user_logs_tenant1_20240601
 PARTITION OF convoy.user_logs 
-FOR VALUES FROM ('tenant1', '2024-06-01') TO ('tenant1', '2024-06-02');
+FOR VALUES FROM ('tenant1', '2024-06-01 00:00:00'::timestamptz) TO ('tenant1', '2024-06-02 00:00:00'::timestamptz);
 
 CREATE TABLE IF NOT EXISTS convoy.user_logs_tenant1_20240602
 PARTITION OF convoy.user_logs 
-FOR VALUES FROM ('tenant1', '2024-06-02') TO ('tenant1', '2024-06-03');
+FOR VALUES FROM ('tenant1', '2024-06-02 00:00:00'::timestamptz) TO ('tenant1', '2024-06-03 00:00:00'::timestamptz);
 
 CREATE TABLE IF NOT EXISTS convoy.user_logs_tenant1_20250626
 PARTITION OF convoy.user_logs 
-FOR VALUES FROM ('tenant1', '2025-06-26') TO ('tenant1', '2025-06-27');
+FOR VALUES FROM ('tenant1', '2025-06-26 00:00:00'::timestamptz) TO ('tenant1', '2025-06-27 00:00:00'::timestamptz);
 
 CREATE TABLE IF NOT EXISTS convoy.user_logs_tenant1_20250627
 PARTITION OF convoy.user_logs 
-FOR VALUES FROM ('tenant1', '2025-06-27') TO ('tenant1', '2025-06-28');
+FOR VALUES FROM ('tenant1', '2025-06-27 00:00:00'::timestamptz) TO ('tenant1', '2025-06-28 00:00:00'::timestamptz);
 
 CREATE TABLE IF NOT EXISTS convoy.user_logs_tenant1_20250628
 PARTITION OF convoy.user_logs 
-FOR VALUES FROM ('tenant1', '2025-06-28') TO ('tenant1', '2025-06-29');
+FOR VALUES FROM ('tenant1', '2025-06-28 00:00:00'::timestamptz) TO ('tenant1', '2025-06-29 00:00:00'::timestamptz);
 
 -- Insert test data into user_logs partitions
 
@@ -134,4 +136,20 @@ SELECT
 FROM pg_tables 
 WHERE schemaname = 'convoy' 
   AND (tablename LIKE 'delivery_attempts%' OR tablename LIKE 'user_logs%')
-ORDER BY tablename; 
+ORDER BY tablename;
+
+-- schemaname |         tablename          |  size   | estimated_rows
+-- ------------+----------------------------+---------+----------------
+--  convoy     | user_logs                  | 0 bytes |           1500
+--  convoy     | user_logs_tenant1_20240601 | 160 kB  |            500
+--  convoy     | user_logs_tenant1_20240602 | 160 kB  |            500
+--  convoy     | user_logs_tenant1_20250626 | 64 kB   |            100
+--  convoy     | user_logs_tenant1_20250627 | 80 kB   |            200
+--  convoy     | user_logs_tenant1_20250628 | 80 kB   |            200
+--  convoy     | user_logs_tenant1_20250629 | 16 kB   |             -1
+--  convoy     | user_logs_tenant1_20250630 | 16 kB   |             -1
+--  convoy     | user_logs_tenant1_20250701 | 16 kB   |             -1
+--  convoy     | user_logs_tenant1_20250702 | 16 kB   |             -1
+--  convoy     | user_logs_tenant1_20250703 | 16 kB   |             -1
+--  convoy     | user_logs_tenant1_20250704 | 16 kB   |             -1
+--  convoy     | user_logs_tenant1_20250705 | 16 kB   |             -1

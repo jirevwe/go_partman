@@ -388,7 +388,7 @@ func TestManager(t *testing.T) {
 
 			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, bounds)
 			require.NoError(t, err)
-			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.sample_20240315 PARTITION OF test.sample FOR VALUES FROM ('2024-03-15') TO ('2024-03-16');")
+			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.sample_20240315 PARTITION OF test.sample FOR VALUES FROM ('2024-03-15 00:00:00+00'::timestamptz) TO ('2024-03-16 00:00:00+00'::timestamptz);")
 		})
 
 		t.Run("with tenant ID", func(t *testing.T) {
@@ -411,7 +411,7 @@ func TestManager(t *testing.T) {
 
 			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, bounds)
 			require.NoError(t, err)
-			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.sample_TENANT1_20240315 PARTITION OF test.sample FOR VALUES FROM ('TENANT1', '2024-03-15') TO ('TENANT1', '2024-03-16');", sql)
+			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.sample_TENANT1_20240315 PARTITION OF test.sample FOR VALUES FROM ('TENANT1', '2024-03-15 00:00:00+00'::timestamptz) TO ('TENANT1', '2024-03-16 00:00:00+00'::timestamptz);", sql)
 		})
 	})
 

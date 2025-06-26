@@ -1,13 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Database, Table2, Settings2, BarChart3, HardDrive, Calendar } from 'lucide-react';
+import { Database, Table2, BarChart3, HardDrive, Calendar } from 'lucide-react';
 import { apiService } from './api';
 import { Partition, ParentTableInfo } from "./types.ts";
 
-// interface ApiError {
-//   message: string;
-// }
-
-function App() {
+export default function App() {
   const [selectedTable, setSelectedTable] = useState<string>('');
   const [tables, setTables] = useState<string[]>([]);
   const [partitions, setPartitions] = useState<Partition[]>([]);
@@ -131,21 +127,13 @@ function App() {
 
         <main className="flex-1 overflow-auto">
           <div className="p-6">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">
-                  {loading ? 'Loading...' : `Partitions for ${selectedTable}`}
-                </h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Manage and monitor your table partitions
-                </p>
-              </div>
-              <div className="flex space-x-3">
-                <button className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                  <Settings2 className="h-4 w-4 mr-2" />
-                  Settings
-                </button>
-              </div>
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold text-gray-900">
+                {loading ? 'Loading...' : `Partitions for ${selectedTable}`}
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Manage and monitor your table partitions
+              </p>
             </div>
 
             {/* Parent Table Summary */}
@@ -266,5 +254,3 @@ function App() {
     </div>
   );
 }
-
-export default App;

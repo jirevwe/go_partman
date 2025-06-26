@@ -335,6 +335,8 @@ func (m *Manager) createPartition(ctx context.Context, tableConfig Table, bounds
 		return err
 	}
 
+	m.logger.Info(pQuery)
+
 	// Execute partition creation
 	_, err = m.db.ExecContext(ctx, pQuery)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,6 +15,10 @@ import (
 
 func main() {
 	logger := partman.NewSlogLogger()
+	err := os.Setenv("TZ", "") // Use UTC by default :)
+	if err != nil {
+		logger.Fatal("failed to set env - ", err)
+	}
 
 	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/party?sslmode=disable")
 	if err != nil {
@@ -45,6 +50,17 @@ func main() {
 					PartitionCount:    10,
 					RetentionPeriod:   time.Hour * 24 * 7,
 				},
+				{
+					Name:              "user_logs",
+					Schema:            "convoy",
+					TenantId:          "tenant1",
+					TenantIdColumn:    "user_id",
+					PartitionBy:       "created_at",
+					PartitionType:     partman.TypeRange,
+					PartitionInterval: time.Hour * 24,
+					PartitionCount:    10,
+					RetentionPeriod:   time.Hour * 24 * 30,
+				},
 			},
 		}),
 		partman.WithClock(partman.NewRealClock()),
@@ -53,7 +69,7 @@ func main() {
 		logger.Fatal(err)
 	}
 
-	// Import existing partitions
+	// Import existing partitions for both tables
 	err = manager.ImportExistingPartitions(context.Background(), partman.Table{
 		Schema:            "convoy",
 		TenantIdColumn:    "project_id",
@@ -62,6 +78,20 @@ func main() {
 		PartitionInterval: time.Hour * 24,
 		PartitionCount:    10,
 		RetentionPeriod:   time.Hour * 24 * 7,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Import existing partitions for user_logs table
+	err = manager.ImportExistingPartitions(context.Background(), partman.Table{
+		Schema:            "convoy",
+		TenantIdColumn:    "user_id",
+		PartitionBy:       "created_at",
+		PartitionType:     partman.TypeRange,
+		PartitionInterval: time.Hour * 24,
+		PartitionCount:    10,
+		RetentionPeriod:   time.Hour * 24 * 30,
 	})
 	if err != nil {
 		log.Fatal(err)

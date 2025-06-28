@@ -48,7 +48,7 @@ func exampleRootMount() {
 					PartitionBy:       "created_at",
 					PartitionType:     partman.TypeRange,
 					PartitionInterval: time.Hour * 24,
-					PartitionCount:    10,
+					PartitionCount:    20,
 					RetentionPeriod:   time.Hour * 24 * 7,
 				},
 				{
@@ -59,7 +59,7 @@ func exampleRootMount() {
 					PartitionBy:       "created_at",
 					PartitionType:     partman.TypeRange,
 					PartitionInterval: time.Hour * 24,
-					PartitionCount:    10,
+					PartitionCount:    20,
 					RetentionPeriod:   time.Hour * 24 * 30,
 				},
 			},

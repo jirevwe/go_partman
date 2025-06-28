@@ -100,9 +100,11 @@ SELECT
     estimated_rows as rows,
     partition_expression as range,
     to_char(now(), 'YYYY-MM-DD') as created,
-    size_bytes as size_bytes
+    size_bytes as size_bytes,
+    COUNT(*) OVER() as total_count
 FROM partition_info
-ORDER BY tablename;`
+ORDER BY tablename
+LIMIT $3 OFFSET $4;`
 
 var getParentTableInfoQuery = `
 WITH parent_table_info AS (
@@ -138,6 +140,6 @@ FROM parent_table_info pti
 CROSS JOIN totals t;`
 
 var getManagedTablesListQuery = `
-SELECT DISTINCT table_name 
+SELECT DISTINCT table_name, schema_name 
 FROM partman.partition_management 
 ORDER BY table_name;`

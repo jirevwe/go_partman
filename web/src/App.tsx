@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Database, Table2, BarChart3, HardDrive, Calendar } from 'lucide-react';
 import { apiService } from './api';
-import { Partition, ParentTableInfo } from "./types.ts";
+import { Partition, ParentTableInfo, PaginationParams, TableInfo } from "./types";
 
 export default function App() {
-  const [selectedTable, setSelectedTable] = useState<string>('');
-  const [tables, setTables] = useState<string[]>([]);
+  const [selectedTable, setSelectedTable] = useState<TableInfo | null>(null);
+  const [tables, setTables] = useState<TableInfo[]>([]);
   const [partitions, setPartitions] = useState<Partition[]>([]);
   const [parentTableInfo, setParentTableInfo] = useState<ParentTableInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const itemsPerPage = 10;
 
   // Fetch tables on component mount
   useEffect(() => {
@@ -19,12 +22,13 @@ export default function App() {
   // Fetch partitions when selected table changes
   useEffect(() => {
     if (selectedTable) {
-      fetchPartitions(selectedTable);
+      fetchPartitions(selectedTable, 1);
     }
   }, [selectedTable]);
 
   const fetchTables = async () => {
     try {
+      setLoading(true);
       const { data, error } = await apiService.getTables();
       if (error) {
         throw new Error(error);
@@ -32,7 +36,7 @@ export default function App() {
       if (data) {
         setTables(data);
         if (data.length > 0) {
-          setSelectedTable(data[0]); // Select the first table by default
+          setSelectedTable(data[0]);
         }
       }
     } catch (err) {
@@ -42,21 +46,40 @@ export default function App() {
     }
   };
 
-  const fetchPartitions = async (tableName: string) => {
+  const fetchPartitions = async (table: TableInfo, page: number) => {
     try {
       setLoading(true);
-      const { data, error } = await apiService.getPartitions(tableName);
+      const pagination: PaginationParams = {
+        limit: itemsPerPage,
+        offset: (page - 1) * itemsPerPage
+      };
+      const { data, error } = await apiService.getPartitions(table.name, table.schema, pagination);
       if (error) {
         throw new Error(error);
       }
       if (data) {
         setPartitions(data.partitions);
         setParentTableInfo(data.parent_table || null);
+        if (data.partitions.length > 0) {
+          setTotalPages(Math.ceil(data.partitions[0].total_count / itemsPerPage));
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch partitions');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleTableSelect = (table: TableInfo) => {
+    setSelectedTable(table);
+    setCurrentPage(1);
+  };
+
+  const handlePageChange = (page: number) => {
+    if (selectedTable) {
+      setCurrentPage(page);
+      fetchPartitions(selectedTable, page);
     }
   };
 
@@ -110,15 +133,15 @@ export default function App() {
             <nav>
               {tables.map((table) => (
                 <button
-                  key={table}
-                  onClick={() => setSelectedTable(table)}
+                  key={`${table.schema}.${table.name}`}
+                  onClick={() => handleTableSelect(table)}
                   className={`w-full text-left px-3 py-2 text-sm rounded-md ${
-                    selectedTable === table
+                    selectedTable?.name === table.name
                       ? 'bg-indigo-50 text-indigo-700 font-medium'
                       : 'text-gray-700 hover:bg-gray-50'
                   }`}
                 >
-                  {table}
+                  {table.schema}.{table.name}
                 </button>
               ))}
             </nav>
@@ -127,14 +150,6 @@ export default function App() {
 
         <main className="flex-1 overflow-auto">
           <div className="p-6">
-            <div className="mb-6">
-              <h2 className="text-lg font-semibold text-gray-900">
-                {loading ? 'Loading...' : `Partitions for ${selectedTable}`}
-              </h2>
-              <p className="text-sm text-gray-500 mt-1">
-                Manage and monitor your table partitions
-              </p>
-            </div>
 
             {/* Parent Table Summary */}
             {parentTableInfo && (
@@ -181,9 +196,6 @@ export default function App() {
 
             {/* Partitions table */}
             <div className="bg-white shadow-sm rounded-lg border border-gray-200">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h3 className="text-lg font-medium text-gray-900">Partition Details</h3>
-              </div>
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
@@ -248,6 +260,43 @@ export default function App() {
                   )}
                 </tbody>
               </table>
+              {/* Pagination Controls */}
+              {!loading && partitions.length > 0 && (
+                <div className="px-6 py-4 flex items-center justify-between border-t border-gray-200">
+                  <div className="flex-1 flex justify-between items-center">
+                    <div>
+                      <p className="text-sm text-gray-700">
+                        Showing page <span className="font-medium">{currentPage}</span> of{' '}
+                        <span className="font-medium">{totalPages}</span>
+                      </p>
+                    </div>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className={`relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
+                          currentPage === 1
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-white text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        className={`relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
+                          currentPage === totalPages
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-white text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>

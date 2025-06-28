@@ -5,6 +5,7 @@ export interface Partition {
   range: string;
   created: string;
   size_bytes: number;
+  total_count: number;
 }
 
 export interface ParentTableInfo {
@@ -15,11 +16,21 @@ export interface ParentTableInfo {
   total_size_bytes: number;
 }
 
+export interface TableInfo {
+  name: string;
+  schema: string;
+}
+
 export interface TablesResponse {
-  tables: string[];
+  tables: TableInfo[];
 }
 
 export interface PartitionsResponse {
   partitions: Partition[];
   parent_table?: ParentTableInfo;
+}
+
+export interface PaginationParams {
+  limit: number;
+  offset: number;
 }

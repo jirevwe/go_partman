@@ -1,7 +1,7 @@
 import {
   TablesResponse,
   PartitionsResponse,
-  PaginationParams,
+  PaginationParams, TableInfo,
 } from "./types.ts";
 
 // Default to localhost in development can be overridden by environment variable
@@ -49,7 +49,7 @@ class ApiService {
     }
   }
 
-  async getTables(): Promise<ApiResponse<string[]>> {
+  async getTables(): Promise<ApiResponse<TableInfo[]>> {
     const response = await this.fetchWithError<TablesResponse>("/api/tables");
     if (response.data) {
       return { data: response.data.tables };

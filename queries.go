@@ -100,9 +100,11 @@ SELECT
     estimated_rows as rows,
     partition_expression as range,
     to_char(now(), 'YYYY-MM-DD') as created,
-    size_bytes as size_bytes
+    size_bytes as size_bytes,
+    COUNT(*) OVER() as total_count
 FROM partition_info
-ORDER BY tablename;`
+ORDER BY tablename
+LIMIT $3 OFFSET $4;`
 
 var getParentTableInfoQuery = `
 WITH parent_table_info AS (

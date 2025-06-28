@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Database, Table2, BarChart3, HardDrive, Calendar } from 'lucide-react';
 import { apiService } from './api';
-import { Partition, ParentTableInfo } from "./types.ts";
+import { Partition, ParentTableInfo, PaginationParams } from "./types.ts";
 
 export default function App() {
   const [selectedTable, setSelectedTable] = useState<string>('');
@@ -10,18 +10,21 @@ export default function App() {
   const [parentTableInfo, setParentTableInfo] = useState<ParentTableInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const itemsPerPage = 10;
 
   // Fetch tables on component mount
   useEffect(() => {
     fetchTables();
   }, []);
 
-  // Fetch partitions when selected table changes
+  // Fetch partitions when selected table or page changes
   useEffect(() => {
     if (selectedTable) {
-      fetchPartitions(selectedTable);
+      fetchPartitions(selectedTable, currentPage);
     }
-  }, [selectedTable]);
+  }, [selectedTable, currentPage]);
 
   const fetchTables = async () => {
     try {
@@ -42,22 +45,33 @@ export default function App() {
     }
   };
 
-  const fetchPartitions = async (tableName: string) => {
+  const fetchPartitions = async (tableName: string, page: number) => {
     try {
       setLoading(true);
-      const { data, error } = await apiService.getPartitions(tableName);
+      const pagination: PaginationParams = {
+        limit: itemsPerPage,
+        offset: (page - 1) * itemsPerPage
+      };
+      const { data, error } = await apiService.getPartitions(tableName, undefined, pagination);
       if (error) {
         throw new Error(error);
       }
       if (data) {
         setPartitions(data.partitions);
         setParentTableInfo(data.parent_table || null);
+        if (data.partitions.length > 0) {
+          setTotalPages(Math.ceil(data.partitions[0].total_count / itemsPerPage));
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch partitions');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
   };
 
   const formatBytes = (bytes: number): string => {
@@ -248,6 +262,43 @@ export default function App() {
                   )}
                 </tbody>
               </table>
+              {/* Pagination Controls */}
+              {!loading && partitions.length > 0 && (
+                <div className="px-6 py-4 flex items-center justify-between border-t border-gray-200">
+                  <div className="flex-1 flex justify-between items-center">
+                    <div>
+                      <p className="text-sm text-gray-700">
+                        Showing page <span className="font-medium">{currentPage}</span> of{' '}
+                        <span className="font-medium">{totalPages}</span>
+                      </p>
+                    </div>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className={`relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
+                          currentPage === 1
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-white text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        className={`relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
+                          currentPage === totalPages
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-white text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>

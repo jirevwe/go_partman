@@ -221,7 +221,8 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 		}
 
 		// Create the partition
-		if err = m.createPartition(ctx, tc, bounds); err != nil {
+		err = m.createPartition(ctx, tc, bounds)
+		if err != nil {
 			return fmt.Errorf("failed to create future partition: %w", err)
 		}
 
@@ -739,10 +740,10 @@ func (m *Manager) GetManagedTables(ctx context.Context) ([]string, error) {
 	return tables, nil
 }
 
-func (m *Manager) GetPartitions(ctx context.Context, schema, tableName string) ([]uiPartitionInfo, error) {
+func (m *Manager) GetPartitions(ctx context.Context, schema, tableName string, limit, offset int) ([]uiPartitionInfo, error) {
 	pattern := fmt.Sprintf("%s_%%", tableName)
 	var partitions []uiPartitionInfo
-	err := m.db.SelectContext(ctx, &partitions, getPartitionDetailsQuery, schema, pattern)
+	err := m.db.SelectContext(ctx, &partitions, getPartitionDetailsQuery, schema, pattern, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get partitions: %w", err)
 	}

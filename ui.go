@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -62,7 +63,29 @@ func (h *apiHandler) handleGetPartitions(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	partitions, err := h.manager.GetPartitions(r.Context(), schema, tableName)
+	// Parse pagination parameters
+	limit := 10 // Default limit
+	offset := 0 // Default offset
+
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		parsedLimit, err := strconv.Atoi(limitStr)
+		if err != nil {
+			http.Error(w, "invalid limit parameter", http.StatusBadRequest)
+			return
+		}
+		limit = parsedLimit
+	}
+
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		parsedOffset, err := strconv.Atoi(offsetStr)
+		if err != nil {
+			http.Error(w, "invalid offset parameter", http.StatusBadRequest)
+			return
+		}
+		offset = parsedOffset
+	}
+
+	partitions, err := h.manager.GetPartitions(r.Context(), schema, tableName, limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

@@ -1,8 +1,7 @@
 import {
-  Partition,
-  ParentTableInfo,
   TablesResponse,
   PartitionsResponse,
+  PaginationParams,
 } from "./types.ts";
 
 // Default to localhost in development can be overridden by environment variable
@@ -60,11 +59,15 @@ class ApiService {
 
   async getPartitions(
     tableName: string,
-    schema?: string
+    schema?: string,
+    pagination?: PaginationParams
   ): Promise<ApiResponse<PartitionsResponse>> {
     let endpoint = `/api/partitions?table=${tableName}`;
     if (schema) {
       endpoint += `&schema=${schema}`;
+    }
+    if (pagination) {
+      endpoint += `&limit=${pagination.limit}&offset=${pagination.offset}`;
     }
     return this.fetchWithError<PartitionsResponse>(endpoint);
   }

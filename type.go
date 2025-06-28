@@ -312,12 +312,13 @@ func (m *managedTable) toTable() Table {
 }
 
 type uiPartitionInfo struct {
-	Name      string `json:"name" db:"name"`
-	Size      string `json:"size" db:"size"`
-	Rows      int64  `json:"rows" db:"rows"`
-	Range     string `json:"range" db:"range"`
-	Created   string `json:"created" db:"created"`
-	SizeBytes int64  `json:"size_bytes" db:"size_bytes"`
+	Name       string `json:"name" db:"name"`
+	Size       string `json:"size" db:"size"`
+	Rows       int64  `json:"rows" db:"rows"`
+	Range      string `json:"range" db:"range"`
+	Created    string `json:"created" db:"created"`
+	SizeBytes  int64  `json:"size_bytes" db:"size_bytes"`
+	TotalCount int64  `json:"total_count" db:"total_count"`
 }
 
 type uiParentTableInfo struct {

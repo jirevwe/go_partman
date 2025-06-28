@@ -16,8 +16,13 @@ export interface ParentTableInfo {
   total_size_bytes: number;
 }
 
+export interface TableInfo {
+  name: string;
+  schema: string;
+}
+
 export interface TablesResponse {
-  tables: string[];
+  tables: TableInfo[];
 }
 
 export interface PartitionsResponse {

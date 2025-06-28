@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Database, Table2, BarChart3, HardDrive, Calendar } from 'lucide-react';
 import { apiService } from './api';
-import { Partition, ParentTableInfo, PaginationParams } from "./types.ts";
+import { Partition, ParentTableInfo, PaginationParams, TableInfo } from "./types";
 
 export default function App() {
-  const [selectedTable, setSelectedTable] = useState<string>('');
-  const [tables, setTables] = useState<string[]>([]);
+  const [selectedTable, setSelectedTable] = useState<TableInfo | null>(null);
+  const [tables, setTables] = useState<TableInfo[]>([]);
   const [partitions, setPartitions] = useState<Partition[]>([]);
   const [parentTableInfo, setParentTableInfo] = useState<ParentTableInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -19,15 +19,16 @@ export default function App() {
     fetchTables();
   }, []);
 
-  // Fetch partitions when selected table or page changes
+  // Fetch partitions when selected table changes
   useEffect(() => {
     if (selectedTable) {
-      fetchPartitions(selectedTable, currentPage);
+      fetchPartitions(selectedTable, 1);
     }
-  }, [selectedTable, currentPage]);
+  }, [selectedTable]);
 
   const fetchTables = async () => {
     try {
+      setLoading(true);
       const { data, error } = await apiService.getTables();
       if (error) {
         throw new Error(error);
@@ -35,7 +36,7 @@ export default function App() {
       if (data) {
         setTables(data);
         if (data.length > 0) {
-          setSelectedTable(data[0]); // Select the first table by default
+          setSelectedTable(data[0]);
         }
       }
     } catch (err) {
@@ -45,14 +46,14 @@ export default function App() {
     }
   };
 
-  const fetchPartitions = async (tableName: string, page: number) => {
+  const fetchPartitions = async (table: TableInfo, page: number) => {
     try {
       setLoading(true);
       const pagination: PaginationParams = {
         limit: itemsPerPage,
         offset: (page - 1) * itemsPerPage
       };
-      const { data, error } = await apiService.getPartitions(tableName, undefined, pagination);
+      const { data, error } = await apiService.getPartitions(table.name, table.schema, pagination);
       if (error) {
         throw new Error(error);
       }
@@ -70,8 +71,16 @@ export default function App() {
     }
   };
 
+  const handleTableSelect = (table: TableInfo) => {
+    setSelectedTable(table);
+    setCurrentPage(1);
+  };
+
   const handlePageChange = (page: number) => {
-    setCurrentPage(page);
+    if (selectedTable) {
+      setCurrentPage(page);
+      fetchPartitions(selectedTable, page);
+    }
   };
 
   const formatBytes = (bytes: number): string => {
@@ -124,15 +133,15 @@ export default function App() {
             <nav>
               {tables.map((table) => (
                 <button
-                  key={table}
-                  onClick={() => setSelectedTable(table)}
+                  key={`${table.schema}.${table.name}`}
+                  onClick={() => handleTableSelect(table)}
                   className={`w-full text-left px-3 py-2 text-sm rounded-md ${
-                    selectedTable === table
+                    selectedTable?.name === table.name
                       ? 'bg-indigo-50 text-indigo-700 font-medium'
                       : 'text-gray-700 hover:bg-gray-50'
                   }`}
                 >
-                  {table}
+                  {table.schema}.{table.name}
                 </button>
               ))}
             </nav>
@@ -141,14 +150,6 @@ export default function App() {
 
         <main className="flex-1 overflow-auto">
           <div className="p-6">
-            <div className="mb-6">
-              <h2 className="text-lg font-semibold text-gray-900">
-                {loading ? 'Loading...' : `Partitions for ${selectedTable}`}
-              </h2>
-              <p className="text-sm text-gray-500 mt-1">
-                Manage and monitor your table partitions
-              </p>
-            </div>
 
             {/* Parent Table Summary */}
             {parentTableInfo && (
@@ -195,9 +196,6 @@ export default function App() {
 
             {/* Partitions table */}
             <div className="bg-white shadow-sm rounded-lg border border-gray-200">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h3 className="text-lg font-medium text-gray-900">Partition Details</h3>
-              </div>
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>

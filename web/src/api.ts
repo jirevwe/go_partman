@@ -59,13 +59,10 @@ class ApiService {
 
   async getPartitions(
     tableName: string,
-    schema?: string,
+    schema: string,
     pagination?: PaginationParams
   ): Promise<ApiResponse<PartitionsResponse>> {
-    let endpoint = `/api/partitions?table=${tableName}`;
-    if (schema) {
-      endpoint += `&schema=${schema}`;
-    }
+    let endpoint = `/api/partitions?table=${tableName}&schema=${schema}`;
     if (pagination) {
       endpoint += `&limit=${pagination.limit}&offset=${pagination.offset}`;
     }

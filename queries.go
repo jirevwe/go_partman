@@ -140,6 +140,6 @@ FROM parent_table_info pti
 CROSS JOIN totals t;`
 
 var getManagedTablesListQuery = `
-SELECT DISTINCT table_name 
+SELECT DISTINCT table_name, schema_name 
 FROM partman.partition_management 
 ORDER BY table_name;`

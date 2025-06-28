@@ -731,8 +731,8 @@ func nullOrZero(s *string) string {
 	return *s
 }
 
-func (m *Manager) GetManagedTables(ctx context.Context) ([]string, error) {
-	var tables []string
+func (m *Manager) GetManagedTables(ctx context.Context) ([]uiManagedTableInfo, error) {
+	var tables []uiManagedTableInfo
 	err := m.db.SelectContext(ctx, &tables, getManagedTablesListQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get managed tables: %w", err)

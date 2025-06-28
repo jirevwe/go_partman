@@ -328,3 +328,8 @@ type uiParentTableInfo struct {
 	PartitionCount int    `json:"partition_count" db:"partition_count"`
 	TotalSizeBytes int64  `json:"total_size_bytes" db:"total_size_bytes"`
 }
+
+type uiManagedTableInfo struct {
+	Name   string `json:"name" db:"table_name"`
+	Schema string `json:"schema" db:"schema_name"`
+}

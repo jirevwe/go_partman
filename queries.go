@@ -143,3 +143,132 @@ var getManagedTablesListQuery = `
 SELECT DISTINCT table_name, schema_name 
 FROM partman.partition_management 
 ORDER BY table_name;`
+
+// New queries for parent table and tenant management
+var createParentTableTable = `
+CREATE TABLE IF NOT EXISTS partman.parent_tables (
+    id TEXT PRIMARY KEY,
+    table_name TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    tenant_column TEXT NOT NULL,
+    partition_by TEXT NOT NULL,
+    partition_type TEXT NOT NULL,
+    partition_interval TEXT NOT NULL,
+    partition_count INT NOT NULL DEFAULT 10,
+    retention_period TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(table_name, schema_name)
+);`
+
+var createTenantsTable = `
+CREATE TABLE IF NOT EXISTS partman.tenants (
+    id TEXT PRIMARY KEY,
+    parent_table_name TEXT NOT NULL,
+    parent_table_schema TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (parent_table_name, parent_table_schema) REFERENCES partman.parent_tables(table_name, schema_name),
+    UNIQUE(parent_table_name, parent_table_schema, tenant_id)
+);`
+
+var upsertParentTableSQL = `
+INSERT INTO partman.parent_tables (
+    id, table_name, schema_name, tenant_column, partition_by, 
+    partition_type, partition_interval, partition_count, retention_period
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (table_name, schema_name) 
+DO UPDATE SET
+    tenant_column = EXCLUDED.tenant_column,
+    partition_by = EXCLUDED.partition_by,
+    partition_type = EXCLUDED.partition_type,
+    partition_interval = EXCLUDED.partition_interval,
+    partition_count = EXCLUDED.partition_count,
+    retention_period = EXCLUDED.retention_period,
+    updated_at = now();`
+
+var insertTenantSQL = `
+INSERT INTO partman.tenants (id, parent_table_name, parent_table_schema, tenant_id)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (parent_table_name, parent_table_schema, tenant_id) 
+DO NOTHING;`
+
+var getParentTablesQuery = `
+SELECT 
+    table_name,
+    schema_name,
+    tenant_column,
+    partition_by,
+    partition_type,
+    partition_interval,
+    partition_count,
+    retention_period
+FROM partman.parent_tables
+ORDER BY table_name, schema_name;`
+
+var getTenantsQuery = `
+SELECT 
+    parent_table_name,
+    parent_table_schema,
+    tenant_id
+FROM partman.tenants
+WHERE parent_table_name = $1 AND parent_table_schema = $2
+ORDER BY tenant_id;`
+
+var getParentTableQuery = `
+SELECT 
+    table_name,
+    schema_name,
+    tenant_column,
+    partition_by,
+    partition_type,
+    partition_interval,
+    partition_count,
+    retention_period
+FROM partman.parent_tables
+WHERE table_name = $1 AND schema_name = $2;`
+
+var findUnmanagedPartitionsQuery = `
+WITH bounds AS (
+SELECT
+	nmsp_parent.nspname AS parent_schema,
+	parent.relname AS parent_table,
+	nmsp_child.nspname AS partition_schema,
+	child.relname AS partition_name,
+	pg_get_expr(child.relpartbound, child.oid) AS partition_expression
+FROM pg_inherits
+		 JOIN pg_class parent ON pg_inherits.inhparent = parent.oid
+		 JOIN pg_class child ON pg_inherits.inhrelid = child.oid
+		 JOIN pg_namespace nmsp_parent ON nmsp_parent.oid = parent.relnamespace
+		 JOIN pg_namespace nmsp_child ON nmsp_child.oid = child.relnamespace
+WHERE parent.relkind = 'p'  AND nmsp_parent.nspname = $1
+),
+	 parsed_values AS (
+		 SELECT
+			 *,
+			 regexp_matches(partition_expression, 'FROM \(([^)]+)\) TO \(([^)]+)\)', 'g') as extracted_values,
+			 (regexp_matches(partition_expression, 'FROM \(([^)]+)\)', 'g'))[1] as from_values,
+			 (regexp_matches(partition_expression, 'TO \(([^)]+)\)', 'g'))[1] as to_values
+		 FROM bounds
+	 )
+SELECT
+	parent_schema,
+	parent_table,
+	partition_name,
+	partition_expression,
+	CASE
+		WHEN from_values LIKE '%,%' THEN replace(split_part(from_values, ', ', 1), '''', '')
+		END as tenant_from,
+	(CASE
+		WHEN from_values LIKE '%,%' THEN split_part(from_values, ', ', 2)
+		ELSE from_values
+		END)::TIMESTAMP as timestamp_from,
+	CASE
+		WHEN to_values LIKE '%,%' THEN replace(split_part(to_values, ', ', 1), '''', '')
+		END as tenant_to,
+	(CASE
+		WHEN to_values LIKE '%,%' THEN split_part(to_values, ', ', 2)
+		ELSE to_values
+		END)::TIMESTAMP as timestamp_to
+FROM parsed_values;
+`

@@ -60,9 +60,9 @@ WHERE schemaname = $1 AND tablename ILIKE $2;`
 
 var dropPartition = `DROP TABLE IF EXISTS %s.%s;`
 
-var generatePartitionQuery = `CREATE TABLE IF NOT EXISTS %s.%s PARTITION OF %s.%s FOR VALUES FROM ('%s') TO ('%s');`
+var generatePartitionQuery = `CREATE TABLE IF NOT EXISTS %s.%s PARTITION OF %s.%s FOR VALUES FROM ('%s 00:00:00+00'::timestamptz) TO ('%s 00:00:00+00'::timestamptz);`
 
-var generatePartitionWithTenantIdQuery = `CREATE TABLE IF NOT EXISTS %s.%s PARTITION OF %s.%s FOR VALUES FROM ('%s', '%s') TO ('%s', '%s');`
+var generatePartitionWithTenantIdQuery = `CREATE TABLE IF NOT EXISTS %s.%s PARTITION OF %s.%s FOR VALUES FROM ('%s', '%s 00:00:00+00'::timestamptz) TO ('%s', '%s 00:00:00+00'::timestamptz);`
 
 var checkColumnExists = `
 SELECT EXISTS (SELECT 1 
@@ -81,3 +81,63 @@ SELECT
     partition_interval,
     retention_period
 FROM partman.partition_management;`
+
+var getPartitionDetailsQuery = `
+WITH partition_info AS (
+    SELECT
+        schemaname,
+        tablename,
+        pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(tablename)) as size_bytes,
+        (SELECT reltuples::bigint FROM pg_class WHERE oid = (quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass) as estimated_rows,
+        pg_get_expr(c.relpartbound, c.oid) as partition_expression
+    FROM pg_tables t
+    JOIN pg_class c ON c.relname = t.tablename
+    WHERE schemaname = $1 AND tablename LIKE $2
+)
+SELECT
+    tablename as name,
+    pg_size_pretty(size_bytes) as size,
+    estimated_rows as rows,
+    partition_expression as range,
+    to_char(now(), 'YYYY-MM-DD') as created,
+    size_bytes as size_bytes
+FROM partition_info
+ORDER BY tablename;`
+
+var getParentTableInfoQuery = `
+WITH parent_table_info AS (
+    SELECT
+        schemaname,
+        tablename,
+        (SELECT COUNT(*) FROM pg_tables WHERE schemaname = $1 AND tablename LIKE $2 || '_%') as partition_count
+    FROM pg_tables
+    WHERE schemaname = $1 AND tablename = $2
+),
+partition_sizes AS (
+    SELECT
+        schemaname,
+        tablename,
+        pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(tablename)) as size_bytes,
+        (SELECT reltuples::bigint FROM pg_class WHERE oid = (quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass) as estimated_rows
+    FROM pg_tables
+    WHERE schemaname = $1 AND tablename LIKE $2 || '_%'
+),
+totals AS (
+    SELECT
+        COALESCE(SUM(size_bytes), 0) as total_size_bytes,
+        COALESCE(SUM(estimated_rows), 0) as total_rows
+    FROM partition_sizes
+)
+SELECT
+    pti.tablename as name,
+    pg_size_pretty(t.total_size_bytes) as total_size,
+    t.total_rows as total_rows,
+    pti.partition_count as partition_count,
+    t.total_size_bytes as total_size_bytes
+FROM parent_table_info pti
+CROSS JOIN totals t;`
+
+var getManagedTablesListQuery = `
+SELECT DISTINCT table_name 
+FROM partman.partition_management 
+ORDER BY table_name;`

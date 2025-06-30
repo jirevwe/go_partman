@@ -143,6 +143,21 @@ type Partitioner interface {
 
 	// ImportExistingPartitions scans the database for existing partitions and adds them to the partition management table
 	ImportExistingPartitions(ctx context.Context, tc Table) error
+
+	// CreateParent registers a parent table for partitioning (new API)
+	CreateParent(ctx context.Context, parentTable ParentTable) error
+
+	// RegisterTenant registers a tenant for an existing parent table (new API)
+	RegisterTenant(ctx context.Context, tenant Tenant) (*TenantRegistrationResult, error)
+
+	// RegisterTenants registers multiple tenants for an existing parent table (new API)
+	RegisterTenants(ctx context.Context, tenants []Tenant) ([]TenantRegistrationResult, error)
+
+	// GetParentTables returns all registered parent tables
+	GetParentTables(ctx context.Context) ([]ParentTable, error)
+
+	// GetTenants returns all tenants for a specific parent table
+	GetTenants(ctx context.Context, parentTableName, parentTableSchema string) ([]Tenant, error)
 }
 
 type Bounds struct {
@@ -187,8 +202,11 @@ type Config struct {
 	// SampleRate is how often the internal ticker runs
 	SampleRate time.Duration
 
-	// Tables holds all the partitioned tables being managed
+	// Tables holds all the partitioned tables being managed (legacy API)
 	Tables []Table
+
+	// ParentTables holds parent table configurations (new API)
+	ParentTables []ParentTable
 }
 
 // Validate checks if the configuration is valid
@@ -197,9 +215,17 @@ func (c *Config) Validate() error {
 		c.SampleRate = time.Minute
 	}
 
+	// Validate legacy Tables API
 	for i, table := range c.Tables {
 		if err := table.Validate(); err != nil {
 			return fmt.Errorf("table[%d]: %w", i, err)
+		}
+	}
+
+	// Validate new ParentTables API
+	for i, parentTable := range c.ParentTables {
+		if err := parentTable.Validate(); err != nil {
+			return fmt.Errorf("parentTable[%d]: %w", i, err)
 		}
 	}
 
@@ -332,4 +358,129 @@ type uiParentTableInfo struct {
 type uiManagedTableInfo struct {
 	Name   string `json:"name" db:"table_name"`
 	Schema string `json:"schema" db:"schema_name"`
+}
+
+// ParentTable represents a parent table configuration that can be shared across multiple tenants
+type ParentTable struct {
+	// Name of the partitioned table
+	Name string
+
+	// Schema of the partitioned table
+	Schema string
+
+	// TenantIdColumn Tenant ID column to partition by (e.g., tenant_id)
+	TenantIdColumn string
+
+	// PartitionBy Timestamp column to partition by (e.g., created_at)
+	PartitionBy string
+
+	// PartitionType Postgres partition type
+	PartitionType PartitionerType // "range", "list", or "hash"
+
+	// PartitionInterval For range partitions (e.g., "1 month", "1 day")
+	PartitionInterval time.Duration
+
+	// PartitionCount is the number of partitions a table will have; defaults to 10
+	PartitionCount uint
+
+	// RetentionPeriod is how long after which partitions will be dropped (e.g., "1 month", "1 day")
+	RetentionPeriod time.Duration
+}
+
+// Tenant represents a tenant configuration for a specific parent table
+type Tenant struct {
+	// ParentTableName references the parent table this tenant belongs to
+	ParentTableName string
+
+	// ParentTableSchema references the parent table schema
+	ParentTableSchema string
+
+	// TenantId Tenant ID column value (e.g., 01J2V010NV1259CYWQEYQC8F35)
+	TenantId string
+}
+
+// TenantRegistrationResult contains the result of registering a tenant
+type TenantRegistrationResult struct {
+	// TenantId the tenant ID that was registered
+	TenantId string
+
+	// ParentTableName the parent table name
+	ParentTableName string
+
+	// ParentTableSchema the parent table schema
+	ParentTableSchema string
+
+	// PartitionsCreated number of partitions created for this tenant
+	PartitionsCreated int
+
+	// ExistingPartitionsImported number of existing partitions imported
+	ExistingPartitionsImported int
+
+	// Errors any errors encountered during registration
+	Errors []error
+}
+
+// Validate checks if the parent table configuration is valid
+func (pt *ParentTable) Validate() error {
+	if pt.Name == "" {
+		return errors.New("parent table name cannot be empty")
+	}
+
+	if pt.Schema == "" {
+		return errors.New("parent table schema cannot be empty")
+	}
+
+	if pt.TenantIdColumn == "" {
+		return errors.New("tenant ID column cannot be empty")
+	}
+
+	if pt.PartitionBy == "" {
+		return errors.New("partition by column cannot be empty")
+	}
+
+	if pt.PartitionType == "" {
+		return errors.New("partition type cannot be empty")
+	}
+
+	if pt.PartitionInterval == 0 {
+		return errors.New("partition interval cannot be zero")
+	}
+
+	if pt.PartitionCount == 0 {
+		pt.PartitionCount = 10
+	}
+
+	return nil
+}
+
+// Validate checks if the tenant configuration is valid
+func (t *Tenant) Validate() error {
+	if t.ParentTableName == "" {
+		return errors.New("parent table name cannot be empty")
+	}
+
+	if t.ParentTableSchema == "" {
+		return errors.New("parent table schema cannot be empty")
+	}
+
+	if t.TenantId == "" {
+		return errors.New("tenant ID cannot be empty")
+	}
+
+	return nil
+}
+
+// toTable converts a ParentTable and Tenant to a Table for internal use
+func (pt *ParentTable) toTable(tenant *Tenant) Table {
+	return Table{
+		Name:              pt.Name,
+		Schema:            pt.Schema,
+		TenantId:          tenant.TenantId,
+		TenantIdColumn:    pt.TenantIdColumn,
+		PartitionBy:       pt.PartitionBy,
+		PartitionType:     pt.PartitionType,
+		PartitionInterval: pt.PartitionInterval,
+		PartitionCount:    pt.PartitionCount,
+		RetentionPeriod:   pt.RetentionPeriod,
+	}
 }

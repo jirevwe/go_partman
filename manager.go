@@ -108,6 +108,8 @@ func (m *Manager) runMigrations(ctx context.Context) error {
 		createSchema,
 		createManagementTable,
 		createUniqueIndex,
+		createParentTableTable,
+		createTenantsTable,
 	}
 
 	for _, migration := range migrations {
@@ -125,6 +127,7 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 		return fmt.Errorf("failed to create management table: %w", err)
 	}
 
+	// Handle legacy Tables API
 	var existingTables []managedTable
 	if err := m.db.SelectContext(ctx, &existingTables, getManagedTablesQuery); err != nil {
 		return fmt.Errorf("failed to load existing managed tables: %w", err)
@@ -153,7 +156,7 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 	}
 	m.config.Tables = mergedTables
 
-	// Validate and initialize each table
+	// Validate and initialize each table (legacy API)
 	for _, table := range m.config.Tables {
 		err := m.checkTableColumnsExist(ctx, table)
 		if err != nil {
@@ -194,10 +197,17 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 		}
 	}
 
+	// Handle new ParentTables API
+	for _, parentTable := range config.ParentTables {
+		if err := m.CreateParent(ctx, parentTable); err != nil {
+			return fmt.Errorf("failed to create parent table %s: %w", parentTable.Name, err)
+		}
+	}
+
 	return nil
 }
 
-// Restore CreateFuturePartitions to use the original logic, but peg all timestamps to UTC
+// CreateFuturePartitions creates partitions for all parent tables and pegs all timestamps to UTC to avoid issues
 func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 	// Determine start time for new partitions
 	today := m.clock.Now().UTC()
@@ -328,7 +338,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 
 // createPartition creates a partition for a table
 func (m *Manager) createPartition(ctx context.Context, tableConfig Table, bounds Bounds) error {
-	// Generate partition name based on bounds
+	// Generate a partition name based on bounds
 	partitionName := m.generatePartitionName(tableConfig, bounds)
 
 	// Create SQL for partition
@@ -558,50 +568,6 @@ func (m *Manager) ImportExistingPartitions(ctx context.Context, tc Table) error 
 	errString := make([]string, 0)
 
 	// Query to get all tables that look like partitions but aren't yet managed
-	const findUnmanagedPartitionsQuery = `
-	WITH bounds AS (
-	SELECT
-		nmsp_parent.nspname AS parent_schema,
-		parent.relname AS parent_table,
-		nmsp_child.nspname AS partition_schema,
-		child.relname AS partition_name,
-		pg_get_expr(child.relpartbound, child.oid) AS partition_expression
-	FROM pg_inherits
-			 JOIN pg_class parent ON pg_inherits.inhparent = parent.oid
-			 JOIN pg_class child ON pg_inherits.inhrelid = child.oid
-			 JOIN pg_namespace nmsp_parent ON nmsp_parent.oid = parent.relnamespace
-			 JOIN pg_namespace nmsp_child ON nmsp_child.oid = child.relnamespace
-	WHERE parent.relkind = 'p'  AND nmsp_parent.nspname = $1
-	),
-		 parsed_values AS (
-			 SELECT
-				 *,
-				 regexp_matches(partition_expression, 'FROM \(([^)]+)\) TO \(([^)]+)\)', 'g') as extracted_values,
-				 (regexp_matches(partition_expression, 'FROM \(([^)]+)\)', 'g'))[1] as from_values,
-				 (regexp_matches(partition_expression, 'TO \(([^)]+)\)', 'g'))[1] as to_values
-			 FROM bounds
-		 )
-	SELECT
-		parent_schema,
-		parent_table,
-		partition_name,
-		partition_expression,
-		CASE
-			WHEN from_values LIKE '%,%' THEN replace(split_part(from_values, ', ', 1), '''', '')
-			END as tenant_from,
-		(CASE
-			WHEN from_values LIKE '%,%' THEN split_part(from_values, ', ', 2)
-			ELSE from_values
-			END)::TIMESTAMP as timestamp_from,
-		CASE
-			WHEN to_values LIKE '%,%' THEN replace(split_part(to_values, ', ', 1), '''', '')
-			END as tenant_to,
-		(CASE
-			WHEN to_values LIKE '%,%' THEN split_part(to_values, ', ', 2)
-			ELSE to_values
-			END)::TIMESTAMP as timestamp_to
-	FROM parsed_values;`
-
 	type unManagedPartition struct {
 		TenantFrom    *string `db:"tenant_from"`
 		TenantTo      *string `db:"tenant_to"`
@@ -751,10 +717,239 @@ func (m *Manager) GetPartitions(ctx context.Context, schema, tableName string, l
 }
 
 func (m *Manager) GetParentTableInfo(ctx context.Context, schema, tableName string) (*uiParentTableInfo, error) {
-	var tableInfo uiParentTableInfo
-	err := m.db.GetContext(ctx, &tableInfo, getParentTableInfoQuery, schema, tableName)
+	var info uiParentTableInfo
+	err := m.db.GetContext(ctx, &info, getParentTableInfoQuery, schema, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get parent table info: %w", err)
+		return nil, err
 	}
-	return &tableInfo, nil
+	return &info, nil
+}
+
+// CreateParent registers a parent table for partitioning (new API)
+func (m *Manager) CreateParent(ctx context.Context, parentTable ParentTable) error {
+	if err := parentTable.Validate(); err != nil {
+		return fmt.Errorf("invalid parent table configuration: %w", err)
+	}
+
+	// Check if table columns exist
+	table := parentTable.toTable(&Tenant{TenantId: "dummy"}) // Use dummy tenant for validation
+	if err := m.checkTableColumnsExist(ctx, table); err != nil {
+		return fmt.Errorf("table validation failed: %w", err)
+	}
+
+	// Insert or update parent table configuration
+	_, err := m.db.ExecContext(ctx, upsertParentTableSQL,
+		ulid.Make().String(),
+		parentTable.Name,
+		parentTable.Schema,
+		parentTable.TenantIdColumn,
+		parentTable.PartitionBy,
+		parentTable.PartitionType,
+		parentTable.PartitionInterval.String(),
+		parentTable.PartitionCount,
+		parentTable.RetentionPeriod.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert parent table config for %s: %w", parentTable.Name, err)
+	}
+
+	m.logger.Info("created parent table", "table", parentTable.Name, "schema", parentTable.Schema)
+	return nil
+}
+
+// RegisterTenant registers a tenant for an existing parent table (new API)
+func (m *Manager) RegisterTenant(ctx context.Context, tenant Tenant) (*TenantRegistrationResult, error) {
+	if err := tenant.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid tenant configuration: %w", err)
+	}
+
+	result := &TenantRegistrationResult{
+		TenantId:                   tenant.TenantId,
+		ParentTableName:            tenant.ParentTableName,
+		ParentTableSchema:          tenant.ParentTableSchema,
+		PartitionsCreated:          0,
+		ExistingPartitionsImported: 0,
+		Errors:                     []error{},
+	}
+
+	// Get parent table configuration
+	var parentTableData struct {
+		TableName         string `db:"table_name"`
+		SchemaName        string `db:"schema_name"`
+		TenantColumn      string `db:"tenant_column"`
+		PartitionBy       string `db:"partition_by"`
+		PartitionType     string `db:"partition_type"`
+		PartitionInterval string `db:"partition_interval"`
+		PartitionCount    uint   `db:"partition_count"`
+		RetentionPeriod   string `db:"retention_period"`
+	}
+
+	err := m.db.GetContext(ctx, &parentTableData, getParentTableQuery, tenant.ParentTableName, tenant.ParentTableSchema)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("parent table not found: %w", err))
+		return result, nil
+	}
+
+	// Convert to ParentTable
+	interval, err := time.ParseDuration(parentTableData.PartitionInterval)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("failed to parse partition interval: %w", err))
+		return result, nil
+	}
+
+	retention, err := time.ParseDuration(parentTableData.RetentionPeriod)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("failed to parse retention period: %w", err))
+		return result, nil
+	}
+
+	parentTable := ParentTable{
+		Name:              parentTableData.TableName,
+		Schema:            parentTableData.SchemaName,
+		TenantIdColumn:    parentTableData.TenantColumn,
+		PartitionBy:       parentTableData.PartitionBy,
+		PartitionType:     PartitionerType(parentTableData.PartitionType),
+		PartitionInterval: interval,
+		PartitionCount:    parentTableData.PartitionCount,
+		RetentionPeriod:   retention,
+	}
+
+	// Insert tenant
+	_, err = m.db.ExecContext(ctx, insertTenantSQL,
+		ulid.Make().String(),
+		tenant.ParentTableName,
+		tenant.ParentTableSchema,
+		tenant.TenantId,
+	)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("failed to insert tenant: %w", err))
+		return result, nil
+	}
+
+	// Convert to Table for internal operations
+	table := parentTable.toTable(&tenant)
+
+	// Add to managed tables (legacy API compatibility)
+	mTable := table.toManagedTable()
+	_, err = m.db.ExecContext(ctx, upsertSQL,
+		ulid.Make().String(),
+		mTable.TableName,
+		mTable.SchemaName,
+		mTable.TenantID,
+		mTable.TenantColumn,
+		mTable.PartitionBy,
+		mTable.PartitionType,
+		mTable.PartitionCount,
+		mTable.PartitionInterval,
+		mTable.RetentionPeriod,
+	)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("failed to add to managed tables: %w", err))
+		return result, nil
+	}
+
+	// Create future partitions
+	if err = m.CreateFuturePartitions(ctx, table); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("failed to create future partitions: %w", err))
+	} else {
+		result.PartitionsCreated = int(parentTable.PartitionCount)
+	}
+
+	// Import existing partitions
+	if err = m.ImportExistingPartitions(ctx, table); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("failed to import existing partitions: %w", err))
+	} else {
+		// Count existing partitions (this is a rough estimate)
+		result.ExistingPartitionsImported = 1 // We'll improve this later
+	}
+
+	m.logger.Info("registered tenant", "tenant", tenant.TenantId, "table", tenant.ParentTableName)
+	return result, nil
+}
+
+// RegisterTenants registers multiple tenants for an existing parent table (new API)
+func (m *Manager) RegisterTenants(ctx context.Context, tenants []Tenant) ([]TenantRegistrationResult, error) {
+	results := make([]TenantRegistrationResult, 0, len(tenants))
+
+	for _, tenant := range tenants {
+		result, err := m.RegisterTenant(ctx, tenant)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, *result)
+	}
+
+	return results, nil
+}
+
+// GetParentTables returns all registered parent tables
+func (m *Manager) GetParentTables(ctx context.Context) ([]ParentTable, error) {
+	var parentTables []struct {
+		TableName         string `db:"table_name"`
+		SchemaName        string `db:"schema_name"`
+		TenantColumn      string `db:"tenant_column"`
+		PartitionBy       string `db:"partition_by"`
+		PartitionType     string `db:"partition_type"`
+		PartitionInterval string `db:"partition_interval"`
+		PartitionCount    uint   `db:"partition_count"`
+		RetentionPeriod   string `db:"retention_period"`
+	}
+
+	err := m.db.SelectContext(ctx, &parentTables, getParentTablesQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get parent tables: %w", err)
+	}
+
+	result := make([]ParentTable, 0, len(parentTables))
+	for _, pt := range parentTables {
+		interval, err := time.ParseDuration(pt.PartitionInterval)
+		if err != nil {
+			m.logger.Error("failed to parse partition interval", "error", err, "table", pt.TableName)
+			continue
+		}
+
+		retention, err := time.ParseDuration(pt.RetentionPeriod)
+		if err != nil {
+			m.logger.Error("failed to parse retention period", "error", err, "table", pt.TableName)
+			continue
+		}
+
+		result = append(result, ParentTable{
+			Name:              pt.TableName,
+			Schema:            pt.SchemaName,
+			TenantIdColumn:    pt.TenantColumn,
+			PartitionBy:       pt.PartitionBy,
+			PartitionType:     PartitionerType(pt.PartitionType),
+			PartitionInterval: interval,
+			PartitionCount:    pt.PartitionCount,
+			RetentionPeriod:   retention,
+		})
+	}
+
+	return result, nil
+}
+
+// GetTenants returns all tenants for a specific parent table
+func (m *Manager) GetTenants(ctx context.Context, parentTableName, parentTableSchema string) ([]Tenant, error) {
+	var tenants []struct {
+		ParentTableName   string `db:"parent_table_name"`
+		ParentTableSchema string `db:"parent_table_schema"`
+		TenantId          string `db:"tenant_id"`
+	}
+
+	err := m.db.SelectContext(ctx, &tenants, getTenantsQuery, parentTableName, parentTableSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tenants: %w", err)
+	}
+
+	result := make([]Tenant, 0, len(tenants))
+	for _, t := range tenants {
+		result = append(result, Tenant{
+			ParentTableName:   t.ParentTableName,
+			ParentTableSchema: t.ParentTableSchema,
+			TenantId:          t.TenantId,
+		})
+	}
+
+	return result, nil
 }

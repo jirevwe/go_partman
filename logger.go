@@ -40,27 +40,27 @@ func NewSlogLogger(opts ...slog.HandlerOptions) *SlogLogger {
 
 // Info logs an info message
 func (l *SlogLogger) Info(args ...interface{}) {
-	l.logger.Info(fmt.Sprint(args...))
+	l.logger.Info(fmt.Sprint(args[0]), args[1:]...)
 }
 
 // Debug logs a debug message
 func (l *SlogLogger) Debug(args ...interface{}) {
-	l.logger.Debug(fmt.Sprint(args...))
+	l.logger.Debug(fmt.Sprint(args[0]), args[1:]...)
 }
 
 // Warn logs a warning message
 func (l *SlogLogger) Warn(args ...interface{}) {
-	l.logger.Warn(fmt.Sprint(args...))
+	l.logger.Warn(fmt.Sprint(args[0]), args[1:]...)
 }
 
 // Error logs an error message
 func (l *SlogLogger) Error(args ...interface{}) {
-	l.logger.Error(fmt.Sprint(args...))
+	l.logger.Error(fmt.Sprint(args[0]), args[1:]...)
 }
 
 // Fatal logs a fatal message and exits
 func (l *SlogLogger) Fatal(args ...interface{}) {
-	l.logger.Error(fmt.Sprint(args...))
+	l.logger.Error(fmt.Sprint(args[0]), args[1:]...)
 	os.Exit(1)
 }
 

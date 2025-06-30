@@ -430,10 +430,6 @@ func (pt *ParentTable) Validate() error {
 		return errors.New("parent table schema cannot be empty")
 	}
 
-	if pt.TenantIdColumn == "" {
-		return errors.New("tenant ID column cannot be empty")
-	}
-
 	if pt.PartitionBy == "" {
 		return errors.New("partition by column cannot be empty")
 	}

@@ -64,7 +64,7 @@ func cleanupTestDB(t *testing.T, db *sqlx.DB, pool *pgxpool.Pool) {
 	}(db)
 	defer pool.Close()
 
-	_, err := db.Exec("DROP TABLE IF EXISTS partman.partition_management")
+	_, err := db.Exec("DROP TABLE IF EXISTS partman.partitions")
 	require.NoError(t, err)
 }
 
@@ -131,7 +131,7 @@ func TestManager(t *testing.T) {
 		require.NoError(t, err)
 
 		var count int
-		err = db.Get(&count, "SELECT COUNT(*) FROM partman.partition_management WHERE table_name = $1", "sample")
+		err = db.Get(&count, "SELECT COUNT(*) FROM partman.partitions WHERE table_name = $1", "sample")
 		require.NoError(t, err)
 		require.Equal(t, 1, count)
 	})
@@ -496,7 +496,7 @@ func TestManager(t *testing.T) {
 		require.Contains(t, partitionName, "tenant1", "Partition name should include tenant ID")
 
 		var exists bool
-		err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.partition_management where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
+		err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.partitions where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
 		require.NoError(t, err)
 		require.True(t, exists)
 	})
@@ -588,7 +588,7 @@ func TestManager(t *testing.T) {
 			}
 
 			var exists bool
-			err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.partition_management where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
+			err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.partitions where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
 			require.NoError(t, err)
 			require.True(t, exists)
 
@@ -793,7 +793,7 @@ func TestManager(t *testing.T) {
 		require.False(t, exists)
 	})
 
-	t.Run("ImportExistingPartitions", func(t *testing.T) {
+	t.Run("importExistingPartitions", func(t *testing.T) {
 		t.Run("Successfully import existing partitions", func(t *testing.T) {
 			db, pool := setupTestDB(t)
 			defer cleanupTestDB(t, db, pool)
@@ -828,7 +828,7 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 
 			// Import existing partitions
-			err = manager.ImportExistingPartitions(ctx, Table{
+			err = manager.importExistingPartitions(ctx, Table{
 				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
@@ -841,7 +841,7 @@ func TestManager(t *testing.T) {
 
 			// Verify partitions were imported correctly
 			var count int
-			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partitions")
 			require.NoError(t, err)
 			require.Equal(t, 2, count) // Should have 2 entries (one for each tenant)
 
@@ -849,7 +849,7 @@ func TestManager(t *testing.T) {
 			var exists bool
 			err = db.QueryRowContext(ctx, `
 				SELECT EXISTS(
-					SELECT 1 FROM partman.partition_management 
+					SELECT 1 FROM partman.partitions 
 					WHERE tenant_id = 'TENANT1' AND partition_interval = '24h0m0s'
 				)`).Scan(&exists)
 			require.NoError(t, err)
@@ -857,7 +857,7 @@ func TestManager(t *testing.T) {
 
 			err = db.QueryRowContext(ctx, `
 				SELECT EXISTS(
-					SELECT 1 FROM partman.partition_management
+					SELECT 1 FROM partman.partitions
 					WHERE tenant_id = 'tenant2' AND partition_interval = '24h0m0s'
 				)`).Scan(&exists)
 			require.NoError(t, err)
@@ -892,7 +892,7 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 
 			// Import existing partitions
-			err = manager.ImportExistingPartitions(ctx, Table{
+			err = manager.importExistingPartitions(ctx, Table{
 				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
@@ -906,7 +906,7 @@ func TestManager(t *testing.T) {
 
 			// Verify no partitions were imported
 			var count int
-			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partitions")
 			require.NoError(t, err)
 			require.Equal(t, 0, count)
 		})
@@ -949,7 +949,7 @@ func TestManager(t *testing.T) {
 			manager, err := NewAndStart(db, config, logger, clock)
 			require.NoError(t, err)
 
-			err = manager.ImportExistingPartitions(ctx, Table{
+			err = manager.importExistingPartitions(ctx, Table{
 				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
@@ -962,7 +962,7 @@ func TestManager(t *testing.T) {
 
 			// Verify all partitions were imported
 			var count int
-			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partitions")
 			require.NoError(t, err)
 			require.Equal(t, 2, count) // Should have 2 entries (one for each tenant)
 
@@ -1006,7 +1006,7 @@ func TestManager(t *testing.T) {
 
 			// Create an existing management entry
 			_, err = db.ExecContext(ctx, `
-				INSERT INTO partman.partition_management (
+				INSERT INTO partman.partitions (
 					id, table_name, schema_name, tenant_id, tenant_column,
 					partition_by, partition_type, partition_interval,
 					retention_period, partition_count
@@ -1017,7 +1017,7 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 
 			// Try to import partitions
-			err = manager.ImportExistingPartitions(ctx, Table{
+			err = manager.importExistingPartitions(ctx, Table{
 				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
@@ -1030,7 +1030,7 @@ func TestManager(t *testing.T) {
 
 			// Verify only one management entry exists (no duplicates)
 			var count int
-			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partitions")
 			require.NoError(t, err)
 			require.Equal(t, 1, count)
 		})
@@ -1073,7 +1073,7 @@ func TestManager(t *testing.T) {
 			manager, err := NewAndStart(db, config, logger, clock)
 			require.NoError(t, err)
 
-			err = manager.ImportExistingPartitions(ctx, Table{
+			err = manager.importExistingPartitions(ctx, Table{
 				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
@@ -1087,7 +1087,7 @@ func TestManager(t *testing.T) {
 
 			// Verify only valid partitions were imported
 			var count int
-			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partition_management")
+			err = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM partman.partitions")
 			require.NoError(t, err)
 			require.Equal(t, 2, count) // Should only import the valid partitions
 
@@ -1095,14 +1095,14 @@ func TestManager(t *testing.T) {
 			var exists bool
 			err = db.QueryRowContext(ctx, `
 				SELECT EXISTS(
-					SELECT 1 FROM partman.partition_management 
+					SELECT 1 FROM partman.partitions 
 					WHERE tenant_id IN ('TENANT1', 'tenant2')
 				)`).Scan(&exists)
 			require.NoError(t, err)
 			require.True(t, exists)
 		})
 
-		t.Run("ImportExistingPartitions with mixed tenant and non-tenant tables", func(t *testing.T) {
+		t.Run("importExistingPartitions with mixed tenant and non-tenant tables", func(t *testing.T) {
 			db, pool := setupTestDB(t)
 			defer cleanupTestDB(t, db, pool)
 
@@ -1159,7 +1159,7 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 
 			// Import existing partitions
-			err = manager.ImportExistingPartitions(ctx, Table{
+			err = manager.importExistingPartitions(ctx, Table{
 				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
@@ -1180,7 +1180,7 @@ func TestManager(t *testing.T) {
 			}
 			err = db.SelectContext(ctx, &managedTables, `
 				SELECT table_name, tenant_id 
-				FROM partman.partition_management`)
+				FROM partman.partitions`)
 			t.Logf("%+v", managedTables)
 			require.NoError(t, err)
 			require.Len(t, managedTables, 2)
@@ -1194,7 +1194,7 @@ func TestManager(t *testing.T) {
 			}
 		})
 
-		t.Run("ImportExistingPartitions with only non-tenant tables", func(t *testing.T) {
+		t.Run("importExistingPartitions with only non-tenant tables", func(t *testing.T) {
 			db, pool := setupTestDB(t)
 			defer cleanupTestDB(t, db, pool)
 
@@ -1237,7 +1237,7 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 
 			// Import existing partitions
-			err = manager.ImportExistingPartitions(ctx, Table{
+			err = manager.importExistingPartitions(ctx, Table{
 				Schema:            "test",
 				TenantIdColumn:    "project_id",
 				PartitionBy:       "created_at",
@@ -1252,7 +1252,7 @@ func TestManager(t *testing.T) {
 			var count int
 			err = db.GetContext(ctx, &count, `
 				SELECT COUNT(*) 
-				FROM partman.partition_management 
+				FROM partman.partitions 
 				WHERE table_name = 'sample'`)
 			require.NoError(t, err)
 			require.Equal(t, 1, count)
@@ -1576,7 +1576,7 @@ func TestManagerConfigUpdate(t *testing.T) {
 		require.Contains(t, manager.config.Tables, newTable)
 	})
 
-	t.Run("ImportExistingPartitions", func(t *testing.T) {
+	t.Run("importExistingPartitions", func(t *testing.T) {
 		db, pool := setupTestDB(t)
 		defer cleanupTestDB(t, db, pool)
 
@@ -1608,7 +1608,7 @@ func TestManagerConfigUpdate(t *testing.T) {
 		}
 
 		// Import existing partitions
-		err = manager.ImportExistingPartitions(ctx, Table{
+		err = manager.importExistingPartitions(ctx, Table{
 			Schema:            "test",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,
@@ -1643,7 +1643,7 @@ func TestManagerInitialization(t *testing.T) {
 		require.NoError(t, err)
 		defer dropTestTable(t, ctx, db)
 
-		// Insert some existing managed tables into partition_management
+		// Insert some existing managed tables into partitions
 		existingTables := []Table{
 			{
 				Name:              "sample",
@@ -1672,7 +1672,7 @@ func TestManagerInitialization(t *testing.T) {
 		// Create management table and insert existing configurations
 		migrations := []string{
 			createSchema,
-			createManagementTable,
+			createPartitionsTable,
 			createUniqueIndex,
 		}
 
@@ -1770,7 +1770,7 @@ func TestManagerInitialization(t *testing.T) {
 		// Create management table and insert existing configurations
 		migrations := []string{
 			createSchema,
-			createManagementTable,
+			createPartitionsTable,
 			createUniqueIndex,
 		}
 
@@ -1832,7 +1832,7 @@ func TestManagerInitialization(t *testing.T) {
 			RetentionPeriod string `db:"retention_period"`
 		}
 		err = db.GetContext(ctx, &dbTable,
-			"SELECT partition_count, retention_period FROM partman.partition_management WHERE tenant_id = $1",
+			"SELECT partition_count, retention_period FROM partman.partitions WHERE tenant_id = $1",
 			"TENANT1",
 		)
 		require.NoError(t, err)
@@ -1909,7 +1909,7 @@ func TestTableDeduplication(t *testing.T) {
 		// Create management table
 		migrations := []string{
 			createSchema,
-			createManagementTable,
+			createPartitionsTable,
 			createUniqueIndex,
 		}
 		for _, migration := range migrations {
@@ -1963,7 +1963,7 @@ func TestTableDeduplication(t *testing.T) {
 		require.Equal(t, uint(10), manager.config.Tables[0].PartitionCount)
 	})
 
-	t.Run("ImportExistingPartitions deduplicates tables", func(t *testing.T) {
+	t.Run("importExistingPartitions deduplicates tables", func(t *testing.T) {
 		db, pool := setupTestDB(t)
 		defer cleanupTestDB(t, db, pool)
 
@@ -2003,7 +2003,7 @@ func TestTableDeduplication(t *testing.T) {
 		}
 
 		// Import existing partitions
-		err = manager.ImportExistingPartitions(ctx, Table{
+		err = manager.importExistingPartitions(ctx, Table{
 			Schema:            "test",
 			PartitionBy:       "created_at",
 			PartitionType:     TypeRange,

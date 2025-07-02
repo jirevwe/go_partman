@@ -45,7 +45,6 @@ func ExampleSeparateHandlers() {
 				{
 					Name:              "delivery_attempts",
 					Schema:            "convoy",
-					TenantId:          "tenant1",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     partman.TypeRange,
@@ -56,7 +55,6 @@ func ExampleSeparateHandlers() {
 				{
 					Name:              "user_logs",
 					Schema:            "convoy",
-					TenantId:          "tenant1",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     partman.TypeRange,
@@ -70,34 +68,6 @@ func ExampleSeparateHandlers() {
 	)
 	if err != nil {
 		logger.Fatal(err)
-	}
-
-	// Import existing partitions for both tables
-	err = manager.ImportExistingPartitions(context.Background(), partman.Table{
-		Schema:            "convoy",
-		TenantIdColumn:    "project_id",
-		PartitionBy:       "created_at",
-		PartitionType:     partman.TypeRange,
-		PartitionInterval: time.Hour * 24,
-		PartitionCount:    10,
-		RetentionPeriod:   time.Hour * 24 * 7,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Import existing partitions for user_logs table
-	err = manager.ImportExistingPartitions(context.Background(), partman.Table{
-		Schema:            "convoy",
-		TenantIdColumn:    "project_id",
-		PartitionBy:       "created_at",
-		PartitionType:     partman.TypeRange,
-		PartitionInterval: time.Hour * 24,
-		PartitionCount:    10,
-		RetentionPeriod:   time.Hour * 24 * 30,
-	})
-	if err != nil {
-		log.Fatal(err)
 	}
 
 	// Create custom mux for more control

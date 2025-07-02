@@ -60,12 +60,12 @@ func cleanupParentTablesTestDB(t *testing.T, db *sqlx.DB, pool *pgxpool.Pool) {
 	require.NoError(t, err)
 	_, err = db.Exec("DROP TABLE IF EXISTS partman.parent_tables CASCADE")
 	require.NoError(t, err)
-	_, err = db.Exec("DROP TABLE IF EXISTS partman.partition_management CASCADE")
+	_, err = db.Exec("DROP TABLE IF EXISTS partman.partitions CASCADE")
 	require.NoError(t, err)
 }
 
 func TestParentTablesAPI(t *testing.T) {
-	t.Run("CreateParent", func(t *testing.T) {
+	t.Run("CreateParentTable", func(t *testing.T) {
 		db, pool := setupTestDB(t)
 		defer cleanupParentTablesTestDB(t, db, pool)
 
@@ -182,16 +182,16 @@ func TestParentTablesAPI(t *testing.T) {
 
 		// Register a tenant
 		tenant := Tenant{
-			ParentTableName:   "user_logs",
-			ParentTableSchema: "test",
-			TenantId:          "tenant1",
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
 		}
 
 		result, err := manager.RegisterTenant(context.Background(), tenant)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Equal(t, "tenant1", result.TenantId)
-		require.Equal(t, "user_logs", result.ParentTableName)
+		require.Equal(t, "user_logs", result.TableName)
 		require.Equal(t, 3, result.PartitionsCreated)
 		require.Empty(t, result.Errors)
 
@@ -228,9 +228,9 @@ func TestParentTablesAPI(t *testing.T) {
 		require.NoError(t, err)
 
 		tenant := Tenant{
-			ParentTableName:   "nonexistent_table",
-			ParentTableSchema: "test",
-			TenantId:          "tenant1",
+			TableName:   "nonexistent_table",
+			TableSchema: "test",
+			TenantId:    "tenant1",
 		}
 
 		result, err := manager.RegisterTenant(context.Background(), tenant)
@@ -281,19 +281,19 @@ func TestParentTablesAPI(t *testing.T) {
 		// Register multiple tenants
 		tenants := []Tenant{
 			{
-				ParentTableName:   "user_logs",
-				ParentTableSchema: "test",
-				TenantId:          "tenant1",
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant1",
 			},
 			{
-				ParentTableName:   "user_logs",
-				ParentTableSchema: "test",
-				TenantId:          "tenant2",
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant2",
 			},
 			{
-				ParentTableName:   "user_logs",
-				ParentTableSchema: "test",
-				TenantId:          "tenant3",
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant3",
 			},
 		}
 
@@ -304,7 +304,7 @@ func TestParentTablesAPI(t *testing.T) {
 		// Verify all tenants were registered successfully
 		for i, result := range results {
 			require.Equal(t, fmt.Sprintf("tenant%d", i+1), result.TenantId)
-			require.Equal(t, "user_logs", result.ParentTableName)
+			require.Equal(t, "user_logs", result.TableName)
 			require.Equal(t, 2, result.PartitionsCreated)
 			require.Empty(t, result.Errors)
 		}
@@ -444,19 +444,19 @@ func TestParentTablesAPI(t *testing.T) {
 		// Register multiple tenants
 		tenants := []Tenant{
 			{
-				ParentTableName:   "user_logs",
-				ParentTableSchema: "test",
-				TenantId:          "tenant1",
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant1",
 			},
 			{
-				ParentTableName:   "user_logs",
-				ParentTableSchema: "test",
-				TenantId:          "tenant2",
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant2",
 			},
 			{
-				ParentTableName:   "user_logs",
-				ParentTableSchema: "test",
-				TenantId:          "tenant3",
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant3",
 			},
 		}
 
@@ -474,8 +474,8 @@ func TestParentTablesAPI(t *testing.T) {
 		tenantIds := make(map[string]bool)
 		for _, tenant := range retrievedTenants {
 			tenantIds[tenant.TenantId] = true
-			require.Equal(t, "user_logs", tenant.ParentTableName)
-			require.Equal(t, "test", tenant.ParentTableSchema)
+			require.Equal(t, "user_logs", tenant.TableName)
+			require.Equal(t, "test", tenant.TableSchema)
 		}
 
 		require.True(t, tenantIds["tenant1"])
@@ -559,9 +559,9 @@ func TestParentTablesAPI(t *testing.T) {
 
 		// Register tenant
 		tenant := Tenant{
-			ParentTableName:   "user_logs",
-			ParentTableSchema: "test",
-			TenantId:          "tenant1",
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
 		}
 
 		result, err := manager.RegisterTenant(context.Background(), tenant)
@@ -660,7 +660,7 @@ func TestParentTablesAPI(t *testing.T) {
 
 		// Verify both legacy and parent table configurations exist
 		var legacyCount int
-		err = db.Get(&legacyCount, "SELECT COUNT(*) FROM partman.partition_management WHERE tenant_id = $1", "legacy_tenant")
+		err = db.Get(&legacyCount, "SELECT COUNT(*) FROM partman.partitions WHERE tenant_id = $1", "legacy_tenant")
 		require.NoError(t, err)
 		require.Equal(t, 1, legacyCount)
 
@@ -671,9 +671,9 @@ func TestParentTablesAPI(t *testing.T) {
 
 		// Register a new tenant using the parent table API
 		tenant := Tenant{
-			ParentTableName:   "user_logs",
-			ParentTableSchema: "test",
-			TenantId:          "new_tenant",
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "new_tenant",
 		}
 
 		result, err := manager.RegisterTenant(context.Background(), tenant)
@@ -734,9 +734,9 @@ func TestParentTablesAPI(t *testing.T) {
 
 		// Register tenant
 		tenant := Tenant{
-			ParentTableName:   "user_logs",
-			ParentTableSchema: "test",
-			TenantId:          "tenant1",
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
 		}
 
 		result, err := manager.RegisterTenant(context.Background(), tenant)
@@ -808,9 +808,9 @@ func TestParentTablesAPI(t *testing.T) {
 
 		// Register tenant
 		tenant := Tenant{
-			ParentTableName:   "user_logs",
-			ParentTableSchema: "test",
-			TenantId:          "tenant1",
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
 		}
 
 		result, err := manager.RegisterTenant(context.Background(), tenant)
@@ -819,16 +819,16 @@ func TestParentTablesAPI(t *testing.T) {
 
 		// Validate result structure
 		require.Equal(t, "tenant1", result.TenantId)
-		require.Equal(t, "user_logs", result.ParentTableName)
-		require.Equal(t, "test", result.ParentTableSchema)
+		require.Equal(t, "user_logs", result.TableName)
+		require.Equal(t, "test", result.TableSchema)
 		require.Equal(t, 2, result.PartitionsCreated)
 		require.Empty(t, result.Errors)
 
 		// Test with invalid tenant (should return error in result)
 		invalidTenant := Tenant{
-			ParentTableName:   "nonexistent_table",
-			ParentTableSchema: "test",
-			TenantId:          "tenant2",
+			TableName:   "nonexistent_table",
+			TableSchema: "test",
+			TenantId:    "tenant2",
 		}
 
 		invalidResult, err := manager.RegisterTenant(context.Background(), invalidTenant)

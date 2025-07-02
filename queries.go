@@ -2,37 +2,56 @@ package partman
 
 var createSchema = `CREATE SCHEMA IF NOT EXISTS partman;`
 
-var createManagementTable = `
-CREATE TABLE IF NOT EXISTS partman.partition_management (
-    id TEXT PRIMARY KEY,
-	table_name TEXT NOT NULL,
-	schema_name TEXT NOT NULL,
-	tenant_id TEXT,
-	tenant_column TEXT,
-	partition_by TEXT NOT NULL,
-	partition_type TEXT NOT NULL,
-	partition_interval TEXT NOT NULL,
-	retention_period TEXT NOT NULL,
-	partition_count INT NOT NULL DEFAULT 10,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+var createParentTableTable = `
+CREATE TABLE IF NOT EXISTS partman.parent_tables (
+    id VARCHAR PRIMARY KEY,
+    schema_name VARCHAR NOT NULL,
+    table_name VARCHAR NOT NULL,
+    tenant_column VARCHAR NOT NULL,
+    partition_by VARCHAR NOT NULL,
+    partition_type VARCHAR NOT NULL,
+    partition_interval VARCHAR NOT NULL,
+    partition_count INT NOT NULL DEFAULT 10,
+    retention_period VARCHAR NOT NULL,
+    created_at timestamptz DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamptz DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(schema_name, table_name)
 );`
 
-var createUniqueIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_table_name_tenant_id ON partman.partition_management (table_name, tenant_id);`
+var createTenantsTable = `
+CREATE TABLE IF NOT EXISTS partman.tenants (
+    id VARCHAR NOT NULL,
+    parent_table_id VARCHAR NOT NULL,
+    created_at timestamptz DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (parent_table_id, id),
+    FOREIGN KEY (parent_table_id) 
+        REFERENCES partman.parent_tables(id) ON DELETE CASCADE
+);`
+
+var createPartitionsTable = `
+CREATE TABLE IF NOT EXISTS partman.partitions (
+    id VARCHAR PRIMARY KEY,
+    parent_table_id VARCHAR NOT NULL,
+    tenant_id VARCHAR,
+    partition_by VARCHAR NOT NULL,
+    partition_type VARCHAR NOT NULL,
+    partition_bounds_from TIMESTAMPTZ NOT NULL,
+    partition_bounds_to TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (parent_table_id) 
+        REFERENCES partman.parent_tables(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_table_id, tenant_id) 
+        REFERENCES partman.tenants(parent_table_id, id) ON DELETE CASCADE,
+    UNIQUE(parent_table_id, tenant_id, partition_bounds_from, partition_bounds_to)
+);`
 
 var upsertSQL = `
-INSERT INTO partman.partition_management (
-	id,	table_name, schema_name, tenant_id,
-	tenant_column, partition_by, partition_type,
-	partition_count, partition_interval,
-	retention_period
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT (table_name, tenant_id) 
-DO UPDATE SET
-	partition_interval = EXCLUDED.partition_interval,
-	retention_period = EXCLUDED.retention_period,
-	partition_count = EXCLUDED.partition_count,
-	updated_at = now();`
+INSERT INTO partman.partitions (
+	id, parent_table_id, tenant_id, partition_by, partition_type,
+	partition_bounds_from, partition_bounds_to
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT DO NOTHING;`
 
 var getlatestPartition = `
 SELECT tablename 
@@ -43,8 +62,9 @@ LIMIT 1;`
 
 // todo(raymond): paginate this query?
 var getManagedTablesRetentionPeriods = `
-SELECT table_name, schema_name, tenant_id, retention_period
-FROM partman.partition_management;`
+SELECT table_name, schema_name, tenant_id, pt.retention_period 
+FROM partman.partitions p
+join partman.parent_tables pt on p.table_name = pt.table_name;`
 
 var getPartitionExists = `
 SELECT EXISTS (
@@ -71,16 +91,16 @@ WHERE table_schema=$1 AND table_name=$2 AND column_name=$3);`
 
 var getManagedTablesQuery = `
 SELECT 
-    table_name,
-    schema_name,
-    tenant_id,
-    tenant_column,
-    partition_by,
-    partition_type,
-    partition_count,
-    partition_interval,
-    retention_period
-FROM partman.partition_management;`
+    pt.table_name,
+    pt.schema_name,
+    p.tenant_id,
+    pt.tenant_column,
+    pt.partition_by,
+    pt.partition_type,
+    p.partition_bounds_from,
+    p.partition_bounds_to
+FROM partman.partitions p 
+join partman.parent_tables pt on p.parent_table_id = pt.id;`
 
 var getPartitionDetailsQuery = `
 WITH partition_info AS (
@@ -141,57 +161,25 @@ CROSS JOIN totals t;`
 
 var getManagedTablesListQuery = `
 SELECT DISTINCT table_name, schema_name 
-FROM partman.partition_management 
+FROM partman.partitions p 
+join partman.parent_tables pt on p.parent_table_id = pt.id
 ORDER BY table_name;`
-
-// New queries for parent table and tenant management
-var createParentTableTable = `
-CREATE TABLE IF NOT EXISTS partman.parent_tables (
-    id TEXT PRIMARY KEY,
-    table_name TEXT NOT NULL,
-    schema_name TEXT NOT NULL,
-    tenant_column TEXT NOT NULL,
-    partition_by TEXT NOT NULL,
-    partition_type TEXT NOT NULL,
-    partition_interval TEXT NOT NULL,
-    partition_count INT NOT NULL DEFAULT 10,
-    retention_period TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(table_name, schema_name)
-);`
-
-var createTenantsTable = `
-CREATE TABLE IF NOT EXISTS partman.tenants (
-    id TEXT PRIMARY KEY,
-    parent_table_name TEXT NOT NULL,
-    parent_table_schema TEXT NOT NULL,
-    tenant_id TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (parent_table_name, parent_table_schema) REFERENCES partman.parent_tables(table_name, schema_name),
-    UNIQUE(parent_table_name, parent_table_schema, tenant_id)
-);`
 
 var upsertParentTableSQL = `
 INSERT INTO partman.parent_tables (
-    id, table_name, schema_name, tenant_column, partition_by, 
-    partition_type, partition_interval, partition_count, retention_period
+    id, table_name, schema_name, 
+	tenant_column, partition_by, 
+    partition_type, partition_interval,
+	partition_count, retention_period
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (table_name, schema_name) 
-DO UPDATE SET
-    tenant_column = EXCLUDED.tenant_column,
-    partition_by = EXCLUDED.partition_by,
-    partition_type = EXCLUDED.partition_type,
-    partition_interval = EXCLUDED.partition_interval,
-    partition_count = EXCLUDED.partition_count,
-    retention_period = EXCLUDED.retention_period,
-    updated_at = now();`
+ON CONFLICT (schema_name, table_name)
+DO UPDATE SET updated_at = current_timestamp
+RETURNING id;`
 
 var insertTenantSQL = `
-INSERT INTO partman.tenants (id, parent_table_name, parent_table_schema, tenant_id)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (parent_table_name, parent_table_schema, tenant_id) 
-DO NOTHING;`
+INSERT INTO partman.tenants (id, parent_table_id) 
+VALUES ($1, $2)
+ON CONFLICT DO NOTHING;`
 
 var getParentTablesQuery = `
 SELECT 
@@ -204,16 +192,13 @@ SELECT
     partition_count,
     retention_period
 FROM partman.parent_tables
-ORDER BY table_name, schema_name;`
+ORDER BY table_name;`
 
 var getTenantsQuery = `
-SELECT 
-    parent_table_name,
-    parent_table_schema,
-    tenant_id
+SELECT id, parent_table_id
 FROM partman.tenants
-WHERE parent_table_name = $1 AND parent_table_schema = $2
-ORDER BY tenant_id;`
+WHERE id = $1 AND parent_table_id = $2
+ORDER BY id;`
 
 var getParentTableQuery = `
 SELECT 
@@ -241,7 +226,7 @@ FROM pg_inherits
 		 JOIN pg_class child ON pg_inherits.inhrelid = child.oid
 		 JOIN pg_namespace nmsp_parent ON nmsp_parent.oid = parent.relnamespace
 		 JOIN pg_namespace nmsp_child ON nmsp_child.oid = child.relnamespace
-WHERE parent.relkind = 'p'  AND nmsp_parent.nspname = $1
+WHERE parent.relkind = 'p'  AND nmsp_parent.nspname = $1 and parent.relname = $2
 ),
 	 parsed_values AS (
 		 SELECT

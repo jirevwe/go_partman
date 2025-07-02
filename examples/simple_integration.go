@@ -17,7 +17,7 @@ import (
 // ExampleSimpleIntegration demonstrates simple integration with the UI handler
 func ExampleSimpleIntegration() {
 	logger := partman.NewSlogLogger(slog.HandlerOptions{
-		Level: slog.LevelError,
+		Level: slog.LevelDebug,
 	})
 	err := os.Setenv("TZ", "") // Use UTC by default :)
 	if err != nil {
@@ -46,20 +46,8 @@ func ExampleSimpleIntegration() {
 			SampleRate: time.Second,
 			Tables: []partman.Table{
 				{
-					Name:              "delivery_attempts",
-					Schema:            "convoy",
-					TenantId:          "tenant1",
-					TenantIdColumn:    "project_id",
-					PartitionBy:       "created_at",
-					PartitionType:     partman.TypeRange,
-					PartitionInterval: time.Hour * 24,
-					PartitionCount:    10,
-					RetentionPeriod:   time.Hour * 24 * 7,
-				},
-				{
 					Name:              "user_logs",
 					Schema:            "convoy",
-					TenantId:          "tenant1",
 					TenantIdColumn:    "project_id",
 					PartitionBy:       "created_at",
 					PartitionType:     partman.TypeRange,
@@ -67,40 +55,22 @@ func ExampleSimpleIntegration() {
 					PartitionCount:    10,
 					RetentionPeriod:   time.Hour * 24 * 30,
 				},
+				{
+					Name:              "delivery_attempts",
+					Schema:            "convoy",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     partman.TypeRange,
+					PartitionInterval: time.Hour * 24,
+					PartitionCount:    10,
+					RetentionPeriod:   time.Hour * 24 * 7,
+				},
 			},
 		}),
 		partman.WithClock(partman.NewRealClock()),
 	)
 	if err != nil {
 		logger.Fatal(err)
-	}
-
-	// Import existing partitions for both tables
-	err = manager.ImportExistingPartitions(context.Background(), partman.Table{
-		Schema:            "convoy",
-		TenantIdColumn:    "project_id",
-		PartitionBy:       "created_at",
-		PartitionType:     partman.TypeRange,
-		PartitionInterval: time.Hour * 24,
-		PartitionCount:    10,
-		RetentionPeriod:   time.Hour * 24 * 7,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Import existing partitions for user_logs table
-	err = manager.ImportExistingPartitions(context.Background(), partman.Table{
-		Schema:            "convoy",
-		TenantIdColumn:    "project_id",
-		PartitionBy:       "created_at",
-		PartitionType:     partman.TypeRange,
-		PartitionInterval: time.Hour * 24,
-		PartitionCount:    10,
-		RetentionPeriod:   time.Hour * 24 * 30,
-	})
-	if err != nil {
-		log.Fatal(err)
 	}
 
 	// Mount UI at /partman

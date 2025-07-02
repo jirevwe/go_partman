@@ -39,7 +39,7 @@ func ExampleSimplifiedAPI() {
 		partman.WithLogger(logger),
 		partman.WithConfig(&partman.Config{
 			SampleRate: time.Second,
-			ParentTables: []partman.ParentTable{
+			Tables: []partman.Table{
 				{
 					Name:              "delivery_attempts",
 					Schema:            "convoy",
@@ -71,24 +71,24 @@ func ExampleSimplifiedAPI() {
 	// Register tenants at startup
 	tenants := []partman.Tenant{
 		{
-			ParentTableName:   "delivery_attempts",
-			ParentTableSchema: "convoy",
-			TenantId:          "tenant1",
+			TableName:   "delivery_attempts",
+			TableSchema: "convoy",
+			TenantId:    "tenant1",
 		},
 		{
-			ParentTableName:   "delivery_attempts",
-			ParentTableSchema: "convoy",
-			TenantId:          "tenant2",
+			TableName:   "delivery_attempts",
+			TableSchema: "convoy",
+			TenantId:    "tenant2",
 		},
 		{
-			ParentTableName:   "user_logs",
-			ParentTableSchema: "convoy",
-			TenantId:          "tenant1",
+			TableName:   "user_logs",
+			TableSchema: "convoy",
+			TenantId:    "tenant1",
 		},
 		{
-			ParentTableName:   "user_logs",
-			ParentTableSchema: "convoy",
-			TenantId:          "tenant2",
+			TableName:   "user_logs",
+			TableSchema: "convoy",
+			TenantId:    "tenant2",
 		},
 	}
 
@@ -103,12 +103,12 @@ func ExampleSimplifiedAPI() {
 		if len(result.Errors) > 0 {
 			logger.Error("tenant registration had errors",
 				"tenant", result.TenantId,
-				"table", result.ParentTableName,
+				"table", result.TableName,
 				"errors", result.Errors)
 		} else {
 			logger.Info("tenant registered successfully",
 				"tenant", result.TenantId,
-				"table", result.ParentTableName,
+				"table", result.TableName,
 				"partitions_created", result.PartitionsCreated,
 				"partitions_imported", result.ExistingPartitionsImported)
 		}
@@ -116,9 +116,9 @@ func ExampleSimplifiedAPI() {
 
 	// Register a new tenant after it has started
 	result, err := manager.RegisterTenant(context.Background(), partman.Tenant{
-		ParentTableName:   "user_logs",
-		ParentTableSchema: "convoy",
-		TenantId:          "tenant3",
+		TableName:   "user_logs",
+		TableSchema: "convoy",
+		TenantId:    "tenant3",
 	})
 	if err != nil {
 		return
@@ -126,7 +126,7 @@ func ExampleSimplifiedAPI() {
 
 	logger.Error("tenant registration results",
 		"tenant", result.TenantId,
-		"table", result.ParentTableName,
+		"table", result.TableName,
 		"partitions_created", result.PartitionsCreated,
 		"partitions_imported", result.ExistingPartitionsImported,
 		"errors", result.Errors)
@@ -146,9 +146,9 @@ func registerTenantAtRuntime(manager *partman.Manager, tenantID string) error {
 
 	// Register a new tenant for delivery_attempts
 	tenant := partman.Tenant{
-		ParentTableName:   "delivery_attempts",
-		ParentTableSchema: "convoy",
-		TenantId:          tenantID,
+		TableName:   "delivery_attempts",
+		TableSchema: "convoy",
+		TenantId:    tenantID,
 	}
 
 	result, err := manager.RegisterTenant(ctx, tenant)

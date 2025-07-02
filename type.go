@@ -10,6 +10,15 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+type tableName string
+
+func buildTableName(schema string, table string, tenantId string) tableName {
+	if tenantId != "" && len(tenantId) > 0 {
+		return tableName(fmt.Sprintf("%s.%s_%s", schema, table, tenantId))
+	}
+	return tableName(fmt.Sprintf("%s.%s", schema, table))
+}
+
 var (
 	ErrHookMustNotBeNil     = errors.New("[partition manager] hook must not be nil")
 	ErrClockMustNotBeNil    = errors.New("[partition manager] clock must not be nil")
@@ -141,11 +150,11 @@ type Partitioner interface {
 	// AddManagedTable adds a new managed table to the partition manager
 	AddManagedTable(tc Table) error
 
-	// ImportExistingPartitions scans the database for existing partitions and adds them to the partition management table
-	ImportExistingPartitions(ctx context.Context, tc Table) error
+	// importExistingPartitions scans the database for existing partitions and adds them to the partition management table
+	importExistingPartitions(ctx context.Context, tc Table) error
 
-	// CreateParent registers a parent table for partitioning (new API)
-	CreateParent(ctx context.Context, parentTable ParentTable) error
+	// CreateParentTable registers a parent table for partitioning (new API)
+	CreateParentTable(ctx context.Context, parentTable Table) error
 
 	// RegisterTenant registers a tenant for an existing parent table (new API)
 	RegisterTenant(ctx context.Context, tenant Tenant) (*TenantRegistrationResult, error)
@@ -154,7 +163,7 @@ type Partitioner interface {
 	RegisterTenants(ctx context.Context, tenants []Tenant) ([]TenantRegistrationResult, error)
 
 	// GetParentTables returns all registered parent tables
-	GetParentTables(ctx context.Context) ([]ParentTable, error)
+	GetParentTables(ctx context.Context) ([]Table, error)
 
 	// GetTenants returns all tenants for a specific parent table
 	GetTenants(ctx context.Context, parentTableName, parentTableSchema string) ([]Tenant, error)
@@ -169,15 +178,52 @@ type D struct {
 	Value string
 }
 
+type Partition struct {
+	// Name the name of the partition within the partitioned table.
+	Name string
+
+	// ParentTable the metadata and configuration of the parent table for the partition.
+	ParentTable Table
+
+	// Bounds the range of time covered by the partition, defined by start (From) and end (To) timestamps.
+	Bounds Bounds
+
+	// TenantId the tenant ID column value (e.g., 01J2V010NV1259CYWQEYQC8F35)
+	TenantId string
+}
+
+func (p *Partition) toManagedTable() managedTable {
+	return managedTable{
+		TableName:           p.Name,
+		SchemaName:          p.ParentTable.Schema,
+		TenantID:            p.TenantId,
+		TenantColumn:        p.ParentTable.TenantIdColumn,
+		PartitionBy:         p.ParentTable.PartitionBy,
+		PartitionType:       string(p.ParentTable.PartitionType),
+		PartitionBoundsFrom: p.Bounds.From,
+		PartitionBoundsTo:   p.Bounds.To,
+	}
+}
+
+// type unManagedPartition struct {
+// 	TenantFrom    string `db:"tenant_from"`
+// 	TenantTo      string `db:"tenant_to"`
+// 	TimestampFrom string `db:"timestamp_from"`
+// 	TimestampTo   string `db:"timestamp_to"`
+// 	PartitionName string `db:"partition_name"`
+// 	PartitionExpr string `db:"partition_expression"`
+// 	ParentSchema  string `db:"parent_schema"`
+// 	Table         string `db:"parent_table"`
+// }
+
 type Table struct {
+	Id string
+
 	// Name of the partitioned table
 	Name string
 
 	// Schema of the partitioned table
 	Schema string
-
-	// TenantId Tenant ID column value (e.g., 01J2V010NV1259CYWQEYQC8F35)
-	TenantId string
 
 	// TenantIdColumn Tenant ID column to partition by (e.g., tenant_id)
 	TenantIdColumn string
@@ -202,11 +248,8 @@ type Config struct {
 	// SampleRate is how often the internal ticker runs
 	SampleRate time.Duration
 
-	// Tables holds all the partitioned tables being managed (legacy API)
+	// Tables holds parent table configurations
 	Tables []Table
-
-	// ParentTables holds parent table configurations (new API)
-	ParentTables []ParentTable
 }
 
 // Validate checks if the configuration is valid
@@ -223,7 +266,7 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate new ParentTables API
-	for i, parentTable := range c.ParentTables {
+	for i, parentTable := range c.Tables {
 		if err := parentTable.Validate(); err != nil {
 			return fmt.Errorf("parentTable[%d]: %w", i, err)
 		}
@@ -246,18 +289,6 @@ func (tc *Table) Validate() error {
 		return errors.New("retention period must be set")
 	}
 
-	if len(tc.TenantId) > 0 {
-		if tc.TenantIdColumn == "" {
-			return errors.New("the tenant id column cannot be empty if the tenant id value is set")
-		}
-	}
-
-	if len(tc.TenantIdColumn) > 0 {
-		if tc.TenantId == "" {
-			return errors.New("the tenant id value cannot be empty if the tenant id column is set")
-		}
-	}
-
 	// set default value
 	if tc.PartitionCount == 0 {
 		tc.PartitionCount = 10
@@ -274,20 +305,6 @@ func (tc *Table) Validate() error {
 	}
 
 	return nil
-}
-
-func (tc *Table) toManagedTable() managedTable {
-	return managedTable{
-		TableName:         tc.Name,
-		SchemaName:        tc.Schema,
-		TenantID:          tc.TenantId,
-		TenantColumn:      tc.TenantIdColumn,
-		PartitionBy:       tc.PartitionBy,
-		PartitionType:     string(tc.PartitionType),
-		PartitionCount:    tc.PartitionCount,
-		PartitionInterval: TimeDuration(tc.PartitionInterval),
-		RetentionPeriod:   TimeDuration(tc.RetentionPeriod),
-	}
 }
 
 type StringArray []string
@@ -312,29 +329,14 @@ func (a *StringArray) Scan(src interface{}) error {
 }
 
 type managedTable struct {
-	TableName         string       `db:"table_name"`
-	SchemaName        string       `db:"schema_name"`
-	TenantID          string       `db:"tenant_id"`
-	TenantColumn      string       `db:"tenant_column"`
-	PartitionBy       string       `db:"partition_by"`
-	PartitionType     string       `db:"partition_type"`
-	PartitionCount    uint         `db:"partition_count"`
-	PartitionInterval TimeDuration `db:"partition_interval"`
-	RetentionPeriod   TimeDuration `db:"retention_period"`
-}
-
-func (m *managedTable) toTable() Table {
-	return Table{
-		Name:              m.TableName,
-		Schema:            m.SchemaName,
-		TenantId:          m.TenantID,
-		TenantIdColumn:    m.TenantColumn,
-		PartitionBy:       m.PartitionBy,
-		PartitionCount:    m.PartitionCount,
-		PartitionType:     PartitionerType(m.PartitionType),
-		RetentionPeriod:   time.Duration(m.RetentionPeriod),
-		PartitionInterval: time.Duration(m.PartitionInterval),
-	}
+	TableName           string    `db:"table_name"`
+	SchemaName          string    `db:"schema_name"`
+	TenantID            string    `db:"tenant_id"`
+	TenantColumn        string    `db:"tenant_column"`
+	PartitionBy         string    `db:"partition_by"`
+	PartitionType       string    `db:"partition_type"`
+	PartitionBoundsFrom time.Time `db:"partition_bounds_from"`
+	PartitionBoundsTo   time.Time `db:"partition_bounds_to"`
 }
 
 type uiPartitionInfo struct {
@@ -360,40 +362,13 @@ type uiManagedTableInfo struct {
 	Schema string `json:"schema" db:"schema_name"`
 }
 
-// ParentTable represents a parent table configuration that can be shared across multiple tenants
-type ParentTable struct {
-	// Name of the partitioned table
-	Name string
-
-	// Schema of the partitioned table
-	Schema string
-
-	// TenantIdColumn Tenant ID column to partition by (e.g., tenant_id)
-	TenantIdColumn string
-
-	// PartitionBy Timestamp column to partition by (e.g., created_at)
-	PartitionBy string
-
-	// PartitionType Postgres partition type
-	PartitionType PartitionerType // "range", "list", or "hash"
-
-	// PartitionInterval For range partitions (e.g., "1 month", "1 day")
-	PartitionInterval time.Duration
-
-	// PartitionCount is the number of partitions a table will have; defaults to 10
-	PartitionCount uint
-
-	// RetentionPeriod is how long after which partitions will be dropped (e.g., "1 month", "1 day")
-	RetentionPeriod time.Duration
-}
-
 // Tenant represents a tenant configuration for a specific parent table
 type Tenant struct {
 	// ParentTableName references the parent table this tenant belongs to
-	ParentTableName string
+	TableName string
 
 	// ParentTableSchema references the parent table schema
-	ParentTableSchema string
+	TableSchema string
 
 	// TenantId Tenant ID column value (e.g., 01J2V010NV1259CYWQEYQC8F35)
 	TenantId string
@@ -404,11 +379,11 @@ type TenantRegistrationResult struct {
 	// TenantId the tenant ID that was registered
 	TenantId string
 
-	// ParentTableName the parent table name
-	ParentTableName string
+	// TableName the parent table name
+	TableName string
 
-	// ParentTableSchema the parent table schema
-	ParentTableSchema string
+	// TableSchema the parent table schema
+	TableSchema string
 
 	// PartitionsCreated number of partitions created for this tenant
 	PartitionsCreated int
@@ -420,43 +395,14 @@ type TenantRegistrationResult struct {
 	Errors []error
 }
 
-// Validate checks if the parent table configuration is valid
-func (pt *ParentTable) Validate() error {
-	if pt.Name == "" {
-		return errors.New("parent table name cannot be empty")
-	}
-
-	if pt.Schema == "" {
-		return errors.New("parent table schema cannot be empty")
-	}
-
-	if pt.PartitionBy == "" {
-		return errors.New("partition by column cannot be empty")
-	}
-
-	if pt.PartitionType == "" {
-		return errors.New("partition type cannot be empty")
-	}
-
-	if pt.PartitionInterval == 0 {
-		return errors.New("partition interval cannot be zero")
-	}
-
-	if pt.PartitionCount == 0 {
-		pt.PartitionCount = 10
-	}
-
-	return nil
-}
-
 // Validate checks if the tenant configuration is valid
 func (t *Tenant) Validate() error {
-	if t.ParentTableName == "" {
-		return errors.New("parent table name cannot be empty")
+	if t.TableSchema == "" {
+		return errors.New("table schema cannot be empty")
 	}
 
-	if t.ParentTableSchema == "" {
-		return errors.New("parent table schema cannot be empty")
+	if t.TableName == "" {
+		return errors.New("table name cannot be empty")
 	}
 
 	if t.TenantId == "" {
@@ -464,19 +410,4 @@ func (t *Tenant) Validate() error {
 	}
 
 	return nil
-}
-
-// toTable converts a ParentTable and Tenant to a Table for internal use
-func (pt *ParentTable) toTable(tenant *Tenant) Table {
-	return Table{
-		Name:              pt.Name,
-		Schema:            pt.Schema,
-		TenantId:          tenant.TenantId,
-		TenantIdColumn:    pt.TenantIdColumn,
-		PartitionBy:       pt.PartitionBy,
-		PartitionType:     pt.PartitionType,
-		PartitionInterval: pt.PartitionInterval,
-		PartitionCount:    pt.PartitionCount,
-		RetentionPeriod:   pt.RetentionPeriod,
-	}
 }

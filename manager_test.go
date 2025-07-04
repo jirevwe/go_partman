@@ -442,94 +442,94 @@ func TestManager(t *testing.T) {
 		cleanupPartManDBs(t, db)
 	})
 
-	// 	t.Run("GeneratePartitionName", func(t *testing.T) {
-	// 		manager := &Manager{}
-	// 		bounds := Bounds{
-	// 			From: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
-	// 			To:   time.Date(2024, 3, 16, 0, 0, 0, 0, time.UTC),
-	// 		}
-	//
-	// 		t.Run("without tenant ID", func(t *testing.T) {
-	// 			tableConfig := Tenant{
-	// 				TableName: "user_logs",
-	// 			}
-	// 			name := manager.generatePartitionName(tableConfig, bounds)
-	// 			require.Equal(t, "user_logs_20240315", name)
-	// 		})
-	//
-	// 		t.Run("with tenant ID", func(t *testing.T) {
-	// 			tableConfig := Tenant{
-	// 				TableName: "user_logs",
-	// 				TenantId:  "TENANT1",
-	// 			}
-	// 			name := manager.generatePartitionName(tableConfig, bounds)
-	// 			require.Equal(t, "user_logs_TENANT1_20240315", name)
-	// 		})
-	// 	})
-	//
-	// 	t.Run("GeneratePartitionSQL", func(t *testing.T) {
-	// 		manager := &Manager{}
-	// 		bounds := Bounds{
-	// 			From: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
-	// 			To:   time.Date(2024, 3, 16, 0, 0, 0, 0, time.UTC),
-	// 		}
-	//
-	// 		t.Run("without tenant ID", func(t *testing.T) {
-	// 			tenant := Tenant{
-	// 				TableName:   "user_logs",
-	// 				TableSchema: "test",
-	// 			}
-	//
-	// 			tableConfig := Table{
-	// 				Name:          "user_logs",
-	// 				Schema:        "test",
-	// 				PartitionType: TypeRange,
-	// 				PartitionBy:   "created_at",
-	// 			}
-	//
-	// 			manager.config = &Config{
-	// 				user_logsRate: time.Second,
-	// 				Tables: []Table{
-	// 					tableConfig,
-	// 				},
-	// 			}
-	//
-	// 			partitionName := manager.generatePartitionName(tenant, bounds)
-	// 			require.Equal(t, "user_logs_20240315", partitionName)
-	//
-	// 			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
-	// 			require.NoError(t, err)
-	// 			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.user_logs_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('2024-03-15 00:00:00+00'::timestamptz) TO ('2024-03-16 00:00:00+00'::timestamptz);")
-	// 		})
-	//
-	// 		t.Run("with tenant ID", func(t *testing.T) {
-	// 			tenant := Tenant{
-	// 				TableName:   "user_logs",
-	// 				TableSchema: "test",
-	// 				TenantId:    "TENANT1",
-	// 			}
-	//
-	// 			tableConfig := Table{
-	// 				Name:          "user_logs",
-	// 				Schema:        "test",
-	// 				PartitionType: TypeRange,
-	// 				PartitionBy:   "created_at",
-	// 			}
-	// 			manager.config = &Config{
-	// 				user_logsRate: time.Second,
-	// 				Tables: []Table{
-	// 					tableConfig,
-	// 				},
-	// 			}
-	//
-	// 			partitionName := manager.generatePartitionName(tenant, bounds)
-	// 			require.Equal(t, "user_logs_TENANT1_20240315", partitionName)
-	//
-	// 			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
-	// 			require.NoError(t, err)
-	// 			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.user_logs_TENANT1_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-03-15 00:00:00+00'::timestamptz) TO ('TENANT1', '2024-03-16 00:00:00+00'::timestamptz);", sql)
-	// 		})
-	// 	})
+	t.Run("GeneratePartitionName", func(t *testing.T) {
+		manager := &Manager{}
+		bounds := Bounds{
+			From: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2024, 3, 16, 0, 0, 0, 0, time.UTC),
+		}
+
+		t.Run("without tenant ID", func(t *testing.T) {
+			tableConfig := Tenant{
+				TableName: "user_logs",
+			}
+			name := manager.generatePartitionName(tableConfig, bounds)
+			require.Equal(t, "user_logs_20240315", name)
+		})
+
+		t.Run("with tenant ID", func(t *testing.T) {
+			tableConfig := Tenant{
+				TableName: "user_logs",
+				TenantId:  "TENANT1",
+			}
+			name := manager.generatePartitionName(tableConfig, bounds)
+			require.Equal(t, "user_logs_TENANT1_20240315", name)
+		})
+	})
+
+	t.Run("GeneratePartitionSQL", func(t *testing.T) {
+		manager := &Manager{}
+		bounds := Bounds{
+			From: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2024, 3, 16, 0, 0, 0, 0, time.UTC),
+		}
+
+		t.Run("without tenant ID", func(t *testing.T) {
+			tenant := Tenant{
+				TableName:   "user_logs",
+				TableSchema: "test",
+			}
+
+			tableConfig := Table{
+				Name:          "user_logs",
+				Schema:        "test",
+				PartitionType: TypeRange,
+				PartitionBy:   "created_at",
+			}
+
+			manager.config = &Config{
+				SampleRate: time.Second,
+				Tables: []Table{
+					tableConfig,
+				},
+			}
+
+			partitionName := manager.generatePartitionName(tenant, bounds)
+			require.Equal(t, "user_logs_20240315", partitionName)
+
+			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
+			require.NoError(t, err)
+			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.user_logs_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('2024-03-15 00:00:00+00'::timestamptz) TO ('2024-03-16 00:00:00+00'::timestamptz);")
+		})
+
+		t.Run("with tenant ID", func(t *testing.T) {
+			tenant := Tenant{
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "TENANT1",
+			}
+
+			tableConfig := Table{
+				Name:          "user_logs",
+				Schema:        "test",
+				PartitionType: TypeRange,
+				PartitionBy:   "created_at",
+			}
+			manager.config = &Config{
+				SampleRate: time.Second,
+				Tables: []Table{
+					tableConfig,
+				},
+			}
+
+			partitionName := manager.generatePartitionName(tenant, bounds)
+			require.Equal(t, "user_logs_TENANT1_20240315", partitionName)
+
+			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
+			require.NoError(t, err)
+			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.user_logs_TENANT1_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-03-15 00:00:00+00'::timestamptz) TO ('TENANT1', '2024-03-16 00:00:00+00'::timestamptz);", sql)
+		})
+	})
 	//
 	// 	t.Run("PartitionExists", func(t *testing.T) {
 	// 		db, pool := setupTestDB(t)

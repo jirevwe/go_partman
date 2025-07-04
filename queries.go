@@ -62,9 +62,9 @@ LIMIT 1;`
 
 // todo(raymond): paginate this query?
 var getManagedTablesRetentionPeriods = `
-SELECT table_name, schema_name, tenant_id, pt.retention_period 
+SELECT pt.table_name, pt.schema_name, p.tenant_id, pt.retention_period 
 FROM partman.partitions p
-join partman.parent_tables pt on p.table_name = pt.table_name;`
+join partman.parent_tables pt on pt.id = p.parent_table_id;`
 
 var getPartitionExists = `
 SELECT EXISTS (
@@ -195,13 +195,15 @@ FROM partman.parent_tables
 ORDER BY table_name;`
 
 var getTenantsQuery = `
-SELECT id, parent_table_id
-FROM partman.tenants
-WHERE id = $1 AND parent_table_id = $2
-ORDER BY id;`
+SELECT t.id as tenant_id, pt.id as parent_table_id
+FROM partman.tenants t
+JOIN partman.parent_tables pt ON pt.id = t.parent_table_id 
+WHERE pt.table_name = $1 AND pt.schema_name = $2
+ORDER BY t.id;`
 
 var getParentTableQuery = `
 SELECT 
+    id,
     table_name,
     schema_name,
     tenant_column,

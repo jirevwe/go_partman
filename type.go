@@ -265,13 +265,6 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate new ParentTables API
-	for i, parentTable := range c.Tables {
-		if err := parentTable.Validate(); err != nil {
-			return fmt.Errorf("parentTable[%d]: %w", i, err)
-		}
-	}
-
 	return nil
 }
 

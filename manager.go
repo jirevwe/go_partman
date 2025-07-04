@@ -167,7 +167,10 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 	today := m.clock.Now().UTC()
 
 	// get the tenants for this table
-	tenants := make([]Tenant, 0)
+	var tenants []struct {
+		ParentTableId string `db:"parent_table_id"`
+		TenantId      string `db:"tenant_id"`
+	}
 	err := m.db.SelectContext(ctx, &tenants, getTenantsQuery, tc.Name, tc.Schema)
 	if err != nil {
 		return fmt.Errorf("failed to fetch tenants: %w", err)
@@ -202,8 +205,13 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 				continue
 			}
 
+			tempTenant := Tenant{
+				TableName:   tc.Name,
+				TableSchema: tc.Schema,
+				TenantId:    te.TenantId,
+			}
 			// Create the partition
-			innerErr = m.createPartition(ctx, tc, te, bounds)
+			innerErr = m.createPartition(ctx, tc, tempTenant, bounds)
 			if innerErr != nil {
 				return fmt.Errorf("failed to create future partition: %w", innerErr)
 			}
@@ -691,7 +699,7 @@ func (m *Manager) CreateParentTable(ctx context.Context, table Table) (string, e
 	return parentTableId.Id, nil
 }
 
-// RegisterTenant registers a tenant for an existing parent table (new API)
+// RegisterTenant registers a tenant for an existing parent table
 func (m *Manager) RegisterTenant(ctx context.Context, tenant Tenant) (*TenantRegistrationResult, error) {
 	if err := tenant.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid tenant configuration: %w", err)
@@ -708,6 +716,7 @@ func (m *Manager) RegisterTenant(ctx context.Context, tenant Tenant) (*TenantReg
 
 	// Get parent table configuration
 	var parentTableData struct {
+		Id                string `db:"id"`
 		TableName         string `db:"table_name"`
 		SchemaName        string `db:"schema_name"`
 		TenantColumn      string `db:"tenant_column"`
@@ -737,7 +746,8 @@ func (m *Manager) RegisterTenant(ctx context.Context, tenant Tenant) (*TenantReg
 		return result, nil
 	}
 
-	table := Table{
+	parentTable := Table{
+		Id:                parentTableData.Id,
 		Name:              parentTableData.TableName,
 		Schema:            parentTableData.SchemaName,
 		TenantIdColumn:    parentTableData.TenantColumn,
@@ -750,9 +760,8 @@ func (m *Manager) RegisterTenant(ctx context.Context, tenant Tenant) (*TenantReg
 
 	// Insert tenant
 	_, err = m.db.ExecContext(ctx, insertTenantSQL,
-		ulid.Make().String(),
 		tenant.TenantId,
-		tenant.TableName,
+		parentTable.Id,
 	)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("failed to insert tenant: %w", err))
@@ -760,14 +769,14 @@ func (m *Manager) RegisterTenant(ctx context.Context, tenant Tenant) (*TenantReg
 	}
 
 	// Create future partitions
-	if err = m.CreateFuturePartitions(ctx, table); err != nil {
+	if err = m.CreateFuturePartitions(ctx, parentTable); err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("failed to create future partitions: %w", err))
 	} else {
-		result.PartitionsCreated = int(table.PartitionCount)
+		result.PartitionsCreated = int(parentTable.PartitionCount)
 	}
 
 	// Import existing partitions
-	if err = m.importExistingPartitions(ctx, table); err != nil {
+	if err = m.importExistingPartitions(ctx, parentTable); err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("failed to import existing partitions: %w", err))
 	} else {
 		// Count existing partitions (this is a rough estimate)
@@ -853,14 +862,13 @@ func (m *Manager) GetParentTables(ctx context.Context) ([]Table, error) {
 // GetTenants returns all tenants for a specific parent table
 func (m *Manager) GetTenants(ctx context.Context, parentTableName, parentTableSchema string) ([]Tenant, error) {
 	var tenants []struct {
-		ParentTableName   string `db:"parent_table_name"`
-		ParentTableSchema string `db:"parent_table_schema"`
-		TenantId          string `db:"tenant_id"`
+		ParentTableId string `db:"parent_table_id"`
+		TenantId      string `db:"tenant_id"`
 	}
 
 	err := m.db.SelectContext(ctx, &tenants, getTenantsQuery, parentTableName, parentTableSchema)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get tenants: %w", err)
+		return nil, fmt.Errorf("failed to fetch tenants: %w", err)
 	}
 
 	result := make([]Tenant, 0, len(tenants))

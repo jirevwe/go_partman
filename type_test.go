@@ -134,14 +134,12 @@ func TestConfig_Validate(t *testing.T) {
 				SampleRate: time.Second,
 				Tables: []Table{
 					{
-						Schema:            "test_schema",
 						Name:              "sample",
-						PartitionType:     TypeRange,
+						Schema:            "test_schema",
 						PartitionBy:       "col1",
+						PartitionType:     TypeRange,
 						PartitionInterval: time.Hour * 24,
 						RetentionPeriod:   time.Hour * 24 * 31,
-						TenantId:          "tenant1",
-						// Missing TenantIdColumn
 					},
 				},
 			},
@@ -153,14 +151,13 @@ func TestConfig_Validate(t *testing.T) {
 				SampleRate: time.Second,
 				Tables: []Table{
 					{
-						Schema:            "test_schema",
 						Name:              "sample",
-						PartitionType:     TypeRange,
+						Schema:            "test_schema",
+						TenantIdColumn:    "tenant_id",
 						PartitionBy:       "col1",
+						PartitionType:     TypeRange,
 						PartitionInterval: time.Hour * 24,
 						RetentionPeriod:   time.Hour * 24 * 31,
-						TenantIdColumn:    "tenant_id",
-						// Missing TenantId
 					},
 				},
 			},
@@ -178,7 +175,6 @@ func TestConfig_Validate(t *testing.T) {
 						PartitionBy:       "col1",
 						PartitionInterval: time.Hour * 24,
 						RetentionPeriod:   time.Hour * 24 * 31,
-						TenantId:          "tenant1",
 						TenantIdColumn:    "tenant_id",
 					},
 				},

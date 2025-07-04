@@ -788,7 +788,7 @@ func (m *Manager) RegisterTenant(ctx context.Context, tenant Tenant) (*TenantReg
 }
 
 // RegisterTenants registers multiple tenants for an existing parent table (new API)
-func (m *Manager) RegisterTenants(ctx context.Context, tenants []Tenant) ([]TenantRegistrationResult, error) {
+func (m *Manager) RegisterTenants(ctx context.Context, tenants ...Tenant) ([]TenantRegistrationResult, error) {
 	tx, err := m.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start transaction: %w", err)
@@ -798,6 +798,7 @@ func (m *Manager) RegisterTenants(ctx context.Context, tenants []Tenant) ([]Tena
 	results := make([]TenantRegistrationResult, 0, len(tenants))
 
 	for _, tenant := range tenants {
+		// TODO: pass the db transaction via the context
 		result, err := m.RegisterTenant(ctx, tenant)
 		if err != nil {
 			return results, err

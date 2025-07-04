@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"testing"
 	"time"
@@ -647,102 +648,115 @@ func TestManager(t *testing.T) {
 		dropParentTables(t, ctx, db)
 		cleanupPartManDBs(t, db)
 	})
-	//
-	// 	t.Run("CreateFuturePartitionsForMultipleTenants", func(t *testing.T) {
-	// 		db, pool := setupTestDB(t)
-	// 		defer cleanupPartManDBs(t, db, pool)
-	//
-	// 		ctx := context.Background()
-	//
-	// 		// Use the tenant ID table schema instead
-	// 		createParentTableWithoutTenant(t, ctx, db)
-	// 		defer dropParentTables(t, context.Background(), db)
-	//
-	// 		tenantOneConfig := Table{
-	// 			Name:              "user_logs",
-	// 			Schema:            "test",
-	// 			TenantId:          "tenant_1",
-	// 			TenantIdColumn:    "tenant_id",
-	// 			PartitionBy:       "created_at",
-	// 			PartitionType:     TypeRange,
-	// 			PartitionInterval: time.Hour * 24,
-	// 			RetentionPeriod:   time.Hour * 24 * 7,
-	// 			PartitionCount:    5,
-	// 		}
-	// 		tenantTwoConfig := Table{
-	// 			Name:              "user_logs",
-	// 			Schema:            "test",
-	// 			TenantId:          "tenant_2",
-	// 			TenantIdColumn:    "tenant_id",
-	// 			PartitionBy:       "created_at",
-	// 			PartitionType:     TypeRange,
-	// 			PartitionInterval: time.Hour * 24,
-	// 			RetentionPeriod:   time.Hour * 24 * 7,
-	// 			PartitionCount:    5,
-	// 		}
-	//
-	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-	// 		config := &Config{
-	// 			SampleRate: 30 * time.Second,
-	// 			Tables: []Table{
-	// 				tenantOneConfig,
-	// 				tenantTwoConfig,
-	// 			},
-	// 		}
-	//
-	// 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-	//
-	// 		_, err := NewManager(
-	// 			WithDB(db),
-	// 			WithLogger(logger),
-	// 			WithClock(clock),
-	// 			WithConfig(config),
-	// 		)
-	// 		require.NoError(t, err)
-	//
-	// 		partitionNames := []string{
-	// 			"user_logs_%s_20240101",
-	// 			"user_logs_%s_20240102",
-	// 			"user_logs_%s_20240103",
-	// 			"user_logs_%s_20240104",
-	// 			"user_logs_%s_20240105",
-	// 		}
-	//
-	// 		// Verify partitions were created for tenant 1
-	// 		for _, tableConfig := range config.Tables {
-	// 			var partitionCount uint
-	// 			tableName := fmt.Sprintf("user_logs_%s%%", tableConfig.TenantId)
-	// 			err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", tableName)
-	// 			require.NoError(t, err)
-	// 			require.Equal(t, tableConfig.PartitionCount, partitionCount)
-	//
-	// 			// Verify the partition naming format
-	// 			rows, err := db.QueryxContext(ctx, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1", fmt.Sprintf("user_logs_%s%%", tableConfig.TenantId))
-	// 			require.NoError(t, err)
-	//
-	// 			var partitions []string
-	// 			for rows.Next() {
-	// 				var name string
-	// 				err = rows.Scan(&name)
-	// 				require.NoError(t, err)
-	// 				partitions = append(partitions, name)
-	// 			}
-	//
-	// 			for i, partition := range partitions {
-	// 				require.Equal(t, fmt.Sprintf(partitionNames[i], tableConfig.TenantId), partition)
-	// 				require.Contains(t, partition, tableConfig.TenantId, "Partition name should include tenant ID")
-	// 			}
-	//
-	// 			var exists bool
-	// 			err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.parent_tables where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
-	// 			require.NoError(t, err)
-	// 			require.True(t, exists)
-	//
-	// 			err = rows.Close()
-	// 			require.NoError(t, err)
-	// 		}
-	// 	})
-	//
+
+	t.Run("CreateFuturePartitionsForMultipleTenants", func(t *testing.T) {
+		ctx := context.Background()
+
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		tableConfig := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
+			PartitionCount:    5,
+		}
+
+		tenant1 := Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "TENANT1",
+		}
+
+		tenant2 := Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "TENANT2",
+		}
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: 30 * time.Second,
+			Tables: []Table{
+				tableConfig,
+			},
+		}
+
+		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		m, err := NewManager(
+			WithDB(db),
+			WithLogger(logger),
+			WithClock(clock),
+			WithConfig(config),
+		)
+		require.NoError(t, err)
+
+		err = m.Start(ctx)
+		require.NoError(t, err)
+
+		results, err := m.RegisterTenants(ctx, tenant1, tenant2)
+		require.NoError(t, err)
+
+		for _, result := range results {
+			if len(result.Errors) > 0 {
+				require.Fail(t, "expected no errors, but got some anyway", result.Errors)
+			}
+		}
+
+		// Wait for maintenance to run
+		time.Sleep(time.Second * 2)
+
+		partitionNames := []string{
+			"user_logs_%s_20240101",
+			"user_logs_%s_20240102",
+			"user_logs_%s_20240103",
+			"user_logs_%s_20240104",
+			"user_logs_%s_20240105",
+		}
+
+		// Verify partitions were created for tenant 1
+		for _, tenant := range []Tenant{tenant1, tenant2} {
+			var partitionCount uint
+			tableName := fmt.Sprintf("user_logs_%s%%", strings.ToLower(tenant.TenantId))
+			err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", tableName)
+			require.NoError(t, err)
+			require.Equal(t, tableConfig.PartitionCount, partitionCount)
+
+			// Verify the partition naming format
+			rows, err := db.QueryxContext(ctx, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1", fmt.Sprintf("user_logs_%s%%", tenant.TenantId))
+			require.NoError(t, err)
+
+			var partitions []string
+			for rows.Next() {
+				var name string
+				err = rows.Scan(&name)
+				require.NoError(t, err)
+				partitions = append(partitions, name)
+			}
+
+			for i, partition := range partitions {
+				require.Equal(t, fmt.Sprintf(partitionNames[i], tenant1.TenantId), partition)
+				require.Contains(t, partition, tenant.TenantId, "Partition name should include tenant ID")
+			}
+
+			var exists bool
+			err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.tenants where id = $1);", tenant.TenantId).Scan(&exists)
+			require.NoError(t, err)
+			require.True(t, exists)
+
+			err = rows.Close()
+			require.NoError(t, err)
+		}
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
+
 	// 	t.Run("TestManagerWithRealClock", func(t *testing.T) {
 	// 		db, pool := setupTestDB(t)
 	// 		defer cleanupPartManDBs(t, db, pool)

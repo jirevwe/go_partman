@@ -33,6 +33,7 @@ CREATE TABLE if not exists test.delivery_attempts (
 ) PARTITION BY RANGE (created_at);`
 
 func createParentTable(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	dropParentTables(t, ctx, db)
 	_, err := db.ExecContext(ctx, createParentTableQuery)
 	require.NoError(t, err)
 }
@@ -69,11 +70,13 @@ func setupTestDB(t *testing.T, ctx context.Context) (*sqlx.DB, *pgxpool.Pool) {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	db := sqlx.NewDb(sqlDB, "pgx")
 
+	cleanupPartManDBs(t, db)
+
 	return db, pool
 }
 
 // cleanupPartManDBs extends the existing cleanupPartManDBs to also clean up parent tables
-func cleanupPartManDBs(t *testing.T, db *sqlx.DB, pool *pgxpool.Pool) {
+func cleanupPartManDBs(t *testing.T, db *sqlx.DB) {
 	t.Helper()
 
 	tx, err := db.Beginx()
@@ -81,8 +84,6 @@ func cleanupPartManDBs(t *testing.T, db *sqlx.DB, pool *pgxpool.Pool) {
 		require.NoError(t, err)
 		t.Fatal(err)
 	}
-
-	defer pool.Close()
 
 	ctx := context.Background()
 
@@ -100,8 +101,8 @@ func cleanupPartManDBs(t *testing.T, db *sqlx.DB, pool *pgxpool.Pool) {
 func TestManager(t *testing.T) {
 	t.Run("NewAndStart", func(t *testing.T) {
 		ctx := context.Background()
-		db, pool := setupTestDB(t, ctx)
-		defer cleanupPartManDBs(t, db, pool)
+		db, _ := setupTestDB(t, ctx)
+		defer cleanupPartManDBs(t, db)
 
 		createParentTable(t, ctx, db)
 		defer dropParentTables(t, ctx, db)
@@ -132,8 +133,8 @@ func TestManager(t *testing.T) {
 	t.Run("Initialize", func(t *testing.T) {
 		ctx := context.Background()
 
-		db, pool := setupTestDB(t, ctx)
-		defer cleanupPartManDBs(t, db, pool)
+		db, _ := setupTestDB(t, ctx)
+		defer cleanupPartManDBs(t, db)
 
 		createParentTable(t, context.Background(), db)
 		defer dropParentTables(t, context.Background(), db)
@@ -171,7 +172,7 @@ func TestManager(t *testing.T) {
 	t.Run("CreateFuturePartitions", func(t *testing.T) {
 		ctx := context.Background()
 
-		db, pool := setupTestDB(t, ctx)
+		db, _ := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
 		tableConfig := Table{
@@ -216,50 +217,54 @@ func TestManager(t *testing.T) {
 		require.Equal(t, tableConfig.PartitionCount, partitionCount)
 
 		dropParentTables(t, ctx, db)
-		cleanupPartManDBs(t, db, pool)
+		cleanupPartManDBs(t, db)
 	})
-	//
-	// 	t.Run("CreateFuturePartitionsWithExistingPartitionsInRange", func(t *testing.T) {
-	// 		db, pool := setupTestDB(t)
-	// 		defer cleanupPartManDBs(t, db, pool)
-	//
-	// 		createParentTable(t, context.Background(), db)
-	// 		defer dropParentTables(t, context.Background(), db)
-	//
-	// 		_, err := db.ExecContext(context.Background(), `
-	// 		CREATE TABLE if not exists test.sample_20240101 PARTITION OF test.user_logs
-	//     	FOR VALUES FROM ('2024-01-01') TO ('2024-01-02');`)
-	// 		require.NoError(t, err)
-	//
-	// 		tableConfig := Table{
-	// 			Name:              "user_logs",
-	// 			Schema:            "test",
-	// 			PartitionBy:       "created_at",
-	// 			PartitionType:     TypeRange,
-	// 			PartitionInterval: time.Hour * 24,
-	// 			RetentionPeriod:   time.Hour * 24 * 7,
-	// 			PartitionCount:    10,
-	// 		}
-	//
-	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-	// 		config := &Config{
-	// 			SampleRate: time.Second,
-	// 			Tables: []Table{
-	// 				tableConfig,
-	// 			},
-	// 		}
-	//
-	// 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-	//
-	// 		_, err = NewAndStart(db, config, logger, clock)
-	// 		require.NoError(t, err)
-	//
-	// 		var partitionCount uint
-	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", tableConfig.Schema)
-	// 		require.NoError(t, err)
-	// 		require.Equal(t, tableConfig.PartitionCount, partitionCount)
-	// 	})
-	//
+
+	t.Run("CreateFuturePartitionsWithExistingPartitionsInRange", func(t *testing.T) {
+		ctx := context.Background()
+
+		db, _ := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		_, err := db.ExecContext(ctx, `
+			CREATE TABLE if not exists test.user_logs_TENANT1_20240101 PARTITION OF test.user_logs
+	    	FOR VALUES FROM ('TENANT1', '2024-01-01 00:00:00+00'::timestamptz) TO ('TENANT1', '2024-01-02 00:00:00+00'::timestamptz);`)
+		require.NoError(t, err)
+
+		tableConfig := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
+			PartitionCount:    10,
+		}
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				tableConfig,
+			},
+		}
+
+		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		_, err = NewAndStart(db, config, logger, clock)
+		require.NoError(t, err)
+
+		time.Sleep(time.Second * 1)
+
+		var partitionCount uint
+		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
+		require.NoError(t, err)
+		require.Equal(t, tableConfig.PartitionCount, partitionCount)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
+
 	// 	t.Run("CreateFuturePartitionsWithExistingPartitionsOutOfRange", func(t *testing.T) {
 	// 		db, pool := setupTestDB(t)
 	// 		defer cleanupPartManDBs(t, db, pool)
@@ -268,7 +273,7 @@ func TestManager(t *testing.T) {
 	// 		defer dropParentTables(t, context.Background(), db)
 	//
 	// 		_, err := db.ExecContext(context.Background(), `
-	// 		CREATE TABLE if not exists test.sample_20231201 PARTITION OF test.user_logs
+	// 		CREATE TABLE if not exists test.user_logs_20231201 PARTITION OF test.user_logs
 	//     	FOR VALUES FROM ('2024-12-01') TO ('2024-12-02');`)
 	// 		require.NoError(t, err)
 	//
@@ -284,7 +289,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				tableConfig,
 	// 			},
@@ -296,7 +301,7 @@ func TestManager(t *testing.T) {
 	// 		require.NoError(t, err)
 	//
 	// 		var partitionCount uint
-	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "sample_%", tableConfig.Schema)
+	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", "user_logs_%", tableConfig.Schema)
 	// 		require.NoError(t, err)
 	// 		require.Equal(t, tableConfig.PartitionCount+1, partitionCount)
 	// 	})
@@ -310,7 +315,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -334,7 +339,7 @@ func TestManager(t *testing.T) {
 	// 		require.NoError(t, err)
 	//
 	// 		var partitionCount int
-	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "sample_%")
+	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_%")
 	// 		require.NoError(t, err)
 	// 		require.Equal(t, 1, partitionCount)
 	// 	})
@@ -348,7 +353,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -378,7 +383,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Verify partitions were created
 	// 		var partitionCount int
-	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "sample_%")
+	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_%")
 	// 		require.NoError(t, err)
 	// 		require.Greater(t, partitionCount, 0)
 	// 	})
@@ -395,7 +400,7 @@ func TestManager(t *testing.T) {
 	// 				TableName: "user_logs",
 	// 			}
 	// 			name := manager.generatePartitionName(tableConfig, bounds)
-	// 			require.Equal(t, "sample_20240315", name)
+	// 			require.Equal(t, "user_logs_20240315", name)
 	// 		})
 	//
 	// 		t.Run("with tenant ID", func(t *testing.T) {
@@ -404,7 +409,7 @@ func TestManager(t *testing.T) {
 	// 				TenantId:  "TENANT1",
 	// 			}
 	// 			name := manager.generatePartitionName(tableConfig, bounds)
-	// 			require.Equal(t, "sample_TENANT1_20240315", name)
+	// 			require.Equal(t, "user_logs_TENANT1_20240315", name)
 	// 		})
 	// 	})
 	//
@@ -429,18 +434,18 @@ func TestManager(t *testing.T) {
 	// 			}
 	//
 	// 			manager.config = &Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 				Tables: []Table{
 	// 					tableConfig,
 	// 				},
 	// 			}
 	//
 	// 			partitionName := manager.generatePartitionName(tenant, bounds)
-	// 			require.Equal(t, "sample_20240315", partitionName)
+	// 			require.Equal(t, "user_logs_20240315", partitionName)
 	//
 	// 			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
 	// 			require.NoError(t, err)
-	// 			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.sample_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('2024-03-15 00:00:00+00'::timestamptz) TO ('2024-03-16 00:00:00+00'::timestamptz);")
+	// 			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.user_logs_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('2024-03-15 00:00:00+00'::timestamptz) TO ('2024-03-16 00:00:00+00'::timestamptz);")
 	// 		})
 	//
 	// 		t.Run("with tenant ID", func(t *testing.T) {
@@ -457,18 +462,18 @@ func TestManager(t *testing.T) {
 	// 				PartitionBy:   "created_at",
 	// 			}
 	// 			manager.config = &Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 				Tables: []Table{
 	// 					tableConfig,
 	// 				},
 	// 			}
 	//
 	// 			partitionName := manager.generatePartitionName(tenant, bounds)
-	// 			require.Equal(t, "sample_TENANT1_20240315", partitionName)
+	// 			require.Equal(t, "user_logs_TENANT1_20240315", partitionName)
 	//
 	// 			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
 	// 			require.NoError(t, err)
-	// 			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.sample_TENANT1_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-03-15 00:00:00+00'::timestamptz) TO ('TENANT1', '2024-03-16 00:00:00+00'::timestamptz);", sql)
+	// 			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.user_logs_TENANT1_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-03-15 00:00:00+00'::timestamptz) TO ('TENANT1', '2024-03-16 00:00:00+00'::timestamptz);", sql)
 	// 		})
 	// 	})
 	//
@@ -482,7 +487,7 @@ func TestManager(t *testing.T) {
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		clock := NewSimulatedClock(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC))
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -499,7 +504,7 @@ func TestManager(t *testing.T) {
 	// 		manager, err := NewAndStart(db, config, logger, clock)
 	// 		require.NoError(t, err)
 	//
-	// 		exists, err := manager.partitionExists(context.Background(), "sample_20240315", "test")
+	// 		exists, err := manager.partitionExists(context.Background(), "user_logs_20240315", "test")
 	// 		require.NoError(t, err)
 	// 		require.True(t, exists)
 	// 	})
@@ -527,7 +532,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				tableConfig,
 	// 			},
@@ -540,13 +545,13 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Verify partitions were created
 	// 		var partitionCount uint
-	// 		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "sample_tenant1%")
+	// 		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant1%")
 	// 		require.NoError(t, err)
 	// 		require.Equal(t, tableConfig.PartitionCount, partitionCount)
 	//
 	// 		// Verify the partition naming format
 	// 		var partitionName string
-	// 		err = db.GetContext(ctx, &partitionName, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1 LIMIT 1", "sample_tenant1%")
+	// 		err = db.GetContext(ctx, &partitionName, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1 LIMIT 1", "user_logs_tenant1%")
 	// 		require.NoError(t, err)
 	// 		require.Contains(t, partitionName, "tenant1", "Partition name should include tenant ID")
 	//
@@ -591,7 +596,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: 30 * time.Second,
+	// 			user_logsRate: 30 * time.Second,
 	// 			Tables: []Table{
 	// 				tenantOneConfig,
 	// 				tenantTwoConfig,
@@ -609,23 +614,23 @@ func TestManager(t *testing.T) {
 	// 		require.NoError(t, err)
 	//
 	// 		partitionNames := []string{
-	// 			"sample_%s_20240101",
-	// 			"sample_%s_20240102",
-	// 			"sample_%s_20240103",
-	// 			"sample_%s_20240104",
-	// 			"sample_%s_20240105",
+	// 			"user_logs_%s_20240101",
+	// 			"user_logs_%s_20240102",
+	// 			"user_logs_%s_20240103",
+	// 			"user_logs_%s_20240104",
+	// 			"user_logs_%s_20240105",
 	// 		}
 	//
 	// 		// Verify partitions were created for tenant 1
 	// 		for _, tableConfig := range config.Tables {
 	// 			var partitionCount uint
-	// 			tableName := fmt.Sprintf("sample_%s%%", tableConfig.TenantId)
+	// 			tableName := fmt.Sprintf("user_logs_%s%%", tableConfig.TenantId)
 	// 			err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", tableName)
 	// 			require.NoError(t, err)
 	// 			require.Equal(t, tableConfig.PartitionCount, partitionCount)
 	//
 	// 			// Verify the partition naming format
-	// 			rows, err := db.QueryxContext(ctx, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1", fmt.Sprintf("sample_%s%%", tableConfig.TenantId))
+	// 			rows, err := db.QueryxContext(ctx, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1", fmt.Sprintf("user_logs_%s%%", tableConfig.TenantId))
 	// 			require.NoError(t, err)
 	//
 	// 			var partitions []string
@@ -664,7 +669,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Setup manager config with two tenants
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -755,9 +760,9 @@ func TestManager(t *testing.T) {
 	//
 	// 			// Create some existing partitions manually
 	// 			partitions := []string{
-	// 				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`,
-	// 				`CREATE TABLE test.sample_tenant1_20240102 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-01-02') TO ('TENANT1', '2024-01-03')`,
-	// 				`CREATE TABLE test.sample_tenant2_20240101 PARTITION OF test.user_logs FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
+	// 				`CREATE TABLE test.user_logs_tenant1_20240101 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`,
+	// 				`CREATE TABLE test.user_logs_tenant1_20240102 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-01-02') TO ('TENANT1', '2024-01-03')`,
+	// 				`CREATE TABLE test.user_logs_tenant2_20240101 PARTITION OF test.user_logs FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
 	// 			}
 	//
 	// 			for _, partition := range partitions {
@@ -768,7 +773,7 @@ func TestManager(t *testing.T) {
 	// 			// Initialize manager
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -824,14 +829,14 @@ func TestManager(t *testing.T) {
 	//
 	// 			// Create an invalid partition (wrong naming format)
 	// 			_, err := db.ExecContext(ctx, `
-	// 				CREATE TABLE test.sample_invalid_format PARTITION OF test.user_logs
+	// 				CREATE TABLE test.user_logs_invalid_format PARTITION OF test.user_logs
 	// 				FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`)
 	// 			require.NoError(t, err)
 	//
 	// 			// Initialize manager
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -871,13 +876,13 @@ func TestManager(t *testing.T) {
 	// 			// Create partitions with different date formats
 	// 			partitions := []string{
 	// 				// Standard format
-	// 				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.user_logs
+	// 				`CREATE TABLE test.user_logs_tenant1_20240101 PARTITION OF test.user_logs
 	// 				 FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`,
 	// 				// Different month and day
-	// 				`CREATE TABLE test.sample_tenant1_20241231 PARTITION OF test.user_logs
+	// 				`CREATE TABLE test.user_logs_tenant1_20241231 PARTITION OF test.user_logs
 	// 				 FOR VALUES FROM ('TENANT1', '2024-12-31') TO ('TENANT1', '2025-01-01')`,
 	// 				// Another tenant
-	// 				`CREATE TABLE test.sample_tenant2_20240101 PARTITION OF test.user_logs
+	// 				`CREATE TABLE test.user_logs_tenant2_20240101 PARTITION OF test.user_logs
 	// 				 FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
 	// 			}
 	//
@@ -888,7 +893,7 @@ func TestManager(t *testing.T) {
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -917,7 +922,7 @@ func TestManager(t *testing.T) {
 	// 			err = db.QueryRowContext(ctx, `
 	// 				SELECT EXISTS(
 	// 					SELECT 1 FROM pg_tables
-	// 					WHERE tablename = 'sample_tenant1_20241231'
+	// 					WHERE tablename = 'user_logs_tenant1_20241231'
 	// 					AND schemaname = 'test'
 	// 				)`).Scan(&exists)
 	// 			require.NoError(t, err)
@@ -936,13 +941,13 @@ func TestManager(t *testing.T) {
 	//
 	// 			// Create a partition
 	// 			_, err := db.ExecContext(ctx, `
-	// 				CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.user_logs
+	// 				CREATE TABLE test.user_logs_tenant1_20240101 PARTITION OF test.user_logs
 	// 				FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`)
 	// 			require.NoError(t, err)
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -993,13 +998,13 @@ func TestManager(t *testing.T) {
 	// 			// Create mixed partitions
 	// 			partitions := []string{
 	// 				// Valid partition
-	// 				`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.user_logs
+	// 				`CREATE TABLE test.user_logs_tenant1_20240101 PARTITION OF test.user_logs
 	// 				 FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`,
 	// 				// Invalid format but valid partition
-	// 				`CREATE TABLE test.sample_invalid_tenant1 PARTITION OF test.user_logs
+	// 				`CREATE TABLE test.user_logs_invalid_tenant1 PARTITION OF test.user_logs
 	// 				 FOR VALUES FROM ('TENANT1', '2024-01-02') TO ('TENANT1', '2024-01-03')`,
 	// 				// Another valid partition
-	// 				`CREATE TABLE test.sample_tenant2_20240101 PARTITION OF test.user_logs
+	// 				`CREATE TABLE test.user_logs_tenant2_20240101 PARTITION OF test.user_logs
 	// 				 FOR VALUES FROM ('tenant2', '2024-01-01') TO ('tenant2', '2024-01-02')`,
 	// 			}
 	//
@@ -1010,7 +1015,7 @@ func TestManager(t *testing.T) {
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -1054,14 +1059,14 @@ func TestManager(t *testing.T) {
 	//
 	// 			// Create test tables - one with tenant support, one without
 	// 			_, err := db.ExecContext(ctx, `
-	// 				CREATE TABLE if not exists test.sample_with_tenant (
+	// 				CREATE TABLE if not exists test.user_logs_with_tenant (
 	// 					id VARCHAR NOT NULL,
 	// 					tenant_id VARCHAR NOT NULL,
 	// 					created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 	// 					PRIMARY KEY (id, created_at, tenant_id)
 	// 				) PARTITION BY RANGE (tenant_id, created_at);
 	//
-	// 				CREATE TABLE if not exists test.sample_no_tenant (
+	// 				CREATE TABLE if not exists test.user_logs_no_tenant (
 	// 					id VARCHAR NOT NULL,
 	// 					created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 	// 					PRIMARY KEY (id, created_at)
@@ -1070,8 +1075,8 @@ func TestManager(t *testing.T) {
 	// 			require.NoError(t, err)
 	// 			defer func() {
 	// 				_, err = db.ExecContext(ctx, `
-	// 					DROP TABLE IF EXISTS test.sample_with_tenant;
-	// 					DROP TABLE IF EXISTS test.sample_no_tenant;
+	// 					DROP TABLE IF EXISTS test.user_logs_with_tenant;
+	// 					DROP TABLE IF EXISTS test.user_logs_no_tenant;
 	// 				`)
 	// 				require.NoError(t, err)
 	// 			}()
@@ -1079,12 +1084,12 @@ func TestManager(t *testing.T) {
 	// 			// Create mixed partitions
 	// 			partitions := []string{
 	// 				// Tenant partitions
-	// 				`CREATE TABLE if not exists test.sample_with_tenant_tenant1_20240101 PARTITION OF test.sample_with_tenant
+	// 				`CREATE TABLE if not exists test.user_logs_with_tenant_tenant1_20240101 PARTITION OF test.user_logs_with_tenant
 	// 				 FOR VALUES FROM ('TENANT1', '2024-01-01') TO ('TENANT1', '2024-01-02')`,
 	// 				// Non-tenant partitions
-	// 				`CREATE TABLE if not exists test.sample_no_tenant_20240101 PARTITION OF test.sample_no_tenant
+	// 				`CREATE TABLE if not exists test.user_logs_no_tenant_20240101 PARTITION OF test.user_logs_no_tenant
 	// 				 FOR VALUES FROM ('2024-01-01') TO ('2024-01-02')`,
-	// 				`CREATE TABLE if not exists test.sample_no_tenant_20240102 PARTITION OF test.sample_no_tenant
+	// 				`CREATE TABLE if not exists test.user_logs_no_tenant_20240102 PARTITION OF test.user_logs_no_tenant
 	// 				 FOR VALUES FROM ('2024-01-02') TO ('2024-01-03')`,
 	// 			}
 	//
@@ -1095,7 +1100,7 @@ func TestManager(t *testing.T) {
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -1130,7 +1135,7 @@ func TestManager(t *testing.T) {
 	// 			require.Len(t, managedTables, 2)
 	//
 	// 			for _, m := range managedTables {
-	// 				if m.TableName == "sample_with_tenant" {
+	// 				if m.TableName == "user_logs_with_tenant" {
 	// 					require.Equal(t, "TENANT1", m.TenantID)
 	// 				} else {
 	// 					require.Empty(t, m.TenantID)
@@ -1160,9 +1165,9 @@ func TestManager(t *testing.T) {
 	//
 	// 			// Create non-tenant partitions
 	// 			partitions := []string{
-	// 				`CREATE TABLE test.sample_20240101 PARTITION OF test.user_logs
+	// 				`CREATE TABLE test.user_logs_20240101 PARTITION OF test.user_logs
 	// 				 FOR VALUES FROM ('2024-01-01') TO ('2024-01-02')`,
-	// 				`CREATE TABLE test.sample_20240102 PARTITION OF test.user_logs
+	// 				`CREATE TABLE test.user_logs_20240102 PARTITION OF test.user_logs
 	// 				 FOR VALUES FROM ('2024-01-02') TO ('2024-01-03')`,
 	// 			}
 	//
@@ -1173,7 +1178,7 @@ func TestManager(t *testing.T) {
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -1206,7 +1211,7 @@ func TestManager(t *testing.T) {
 	// 				SELECT COUNT(*)
 	// 				FROM pg_tables
 	// 				WHERE schemaname = 'test'
-	// 				AND tablename LIKE 'sample_%'`)
+	// 				AND tablename LIKE 'user_logs_%'`)
 	// 			require.NoError(t, err)
 	// 			require.Equal(t, 2, count)
 	// 		})
@@ -1223,7 +1228,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1252,7 +1257,7 @@ func TestManager(t *testing.T) {
 	// 	t.Run("Error - DB must not be nil", func(t *testing.T) {
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1283,7 +1288,7 @@ func TestManager(t *testing.T) {
 	// 		defer cleanupPartManDBs(t, db, pool)
 	//
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1332,7 +1337,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1369,7 +1374,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Initial configuration with two tenants
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1418,7 +1423,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Verify that the new tenant's partitions exist
 	// 		var partitionCount int
-	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "sample_tenant3%")
+	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant3%")
 	// 		require.NoError(t, err)
 	// 		require.Equal(t, 2, partitionCount)
 	//
@@ -1444,7 +1449,7 @@ func TestManager(t *testing.T) {
 	// 		require.NoError(t, err)
 	//
 	// 		// Verify that the new tenant's partitions exist
-	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "sample_tenant3%")
+	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant3%")
 	// 		require.NoError(t, err)
 	// 		require.Equal(t, 1, partitionCount)
 	//
@@ -1465,7 +1470,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1505,7 +1510,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1543,7 +1548,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1604,7 +1609,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1640,7 +1645,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1723,7 +1728,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1803,7 +1808,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1879,7 +1884,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1919,7 +1924,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1977,7 +1982,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -2014,7 +2019,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -2081,7 +2086,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -2155,7 +2160,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -2242,7 +2247,7 @@ func TestManager(t *testing.T) {
 	// 		}
 	//
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables:     []Table{initialTable},
 	// 		}
 	//
@@ -2278,7 +2283,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Initial config with empty tables
 	// 		config := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 		}
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
@@ -2288,8 +2293,8 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Create some existing partitions manually
 	// 		partitions := []string{
-	// 			`CREATE TABLE test.sample_tenant1_20240101 PARTITION OF test.user_logs FOR VALUES FROM ('2024-01-01') TO ('2024-01-02')`,
-	// 			`CREATE TABLE test.sample_tenant1_20240102 PARTITION OF test.user_logs FOR VALUES FROM ('2024-01-02') TO ('2024-01-03')`,
+	// 			`CREATE TABLE test.user_logs_tenant1_20240101 PARTITION OF test.user_logs FOR VALUES FROM ('2024-01-01') TO ('2024-01-02')`,
+	// 			`CREATE TABLE test.user_logs_tenant1_20240102 PARTITION OF test.user_logs FOR VALUES FROM ('2024-01-02') TO ('2024-01-03')`,
 	// 		}
 	//
 	// 		for _, partition := range partitions {
@@ -2383,7 +2388,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Create the manager with one table pre-configured
 	// 		newConfig := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:   "user_logs",
@@ -2475,7 +2480,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Create the new manager with overlapping config
 	// 		newConfig := &Config{
-	// 			SampleRate: time.Second,
+	// 			user_logsRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:   "user_logs",
@@ -2549,7 +2554,7 @@ func TestManager(t *testing.T) {
 	// 			WithDB(db),
 	// 			WithLogger(NewSlogLogger()),
 	// 			WithConfig(&Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 				Tables:     []Table{initialTable},
 	// 			}),
 	// 			WithClock(NewSimulatedClock(time.Now())),
@@ -2631,7 +2636,7 @@ func TestManager(t *testing.T) {
 	// 			WithDB(db),
 	// 			WithLogger(NewSlogLogger()),
 	// 			WithConfig(&Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 				Tables:     []Table{configTable},
 	// 			}),
 	// 			WithClock(NewSimulatedClock(time.Now())),
@@ -2666,7 +2671,7 @@ func TestManager(t *testing.T) {
 	// 			WithDB(db),
 	// 			WithLogger(NewSlogLogger()),
 	// 			WithConfig(&Config{
-	// 				SampleRate: time.Second,
+	// 				user_logsRate: time.Second,
 	// 				Tables:     []Table{initialTable},
 	// 			}),
 	// 			WithClock(NewSimulatedClock(time.Now())),
@@ -2675,7 +2680,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Create some existing partitions for the same table
 	// 		partitions := []string{
-	// 			`CREATE TABLE test.sample_20240101 PARTITION OF test.user_logs FOR VALUES FROM ('2024-01-01') TO ('2024-01-02')`,
+	// 			`CREATE TABLE test.user_logs_20240101 PARTITION OF test.user_logs FOR VALUES FROM ('2024-01-01') TO ('2024-01-02')`,
 	// 		}
 	// 		for _, partition := range partitions {
 	// 			_, err = db.ExecContext(ctx, partition)

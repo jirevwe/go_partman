@@ -21,7 +21,7 @@ CREATE TABLE if not exists test.user_logs (
     project_id VARCHAR NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     data JSONB,
-    PRIMARY KEY (id, created_at, project_id)
+    PRIMARY KEY (id, project_id, created_at)
 ) PARTITION BY RANGE (project_id, created_at);`
 
 var createParentTableWithoutTenantQuery = `
@@ -580,58 +580,73 @@ func TestManager(t *testing.T) {
 		dropParentTables(t, ctx, db)
 		cleanupPartManDBs(t, db)
 	})
-	//
-	// 	t.Run("CreateFuturePartitionsWithTenantId", func(t *testing.T) {
-	// 		db, pool := setupTestDB(t)
-	// 		defer cleanupPartManDBs(t, db, pool)
-	//
-	// 		ctx := context.Background()
-	//
-	// 		// Use the tenant ID table schema instead
-	// 		createParentTableWithoutTenant(t, ctx, db)
-	// 		defer dropParentTables(t, context.Background(), db)
-	//
-	// 		tableConfig := Table{
-	// 			Name:              "user_logs",
-	// 			Schema:            "test",
-	// 			TenantIdColumn:    "tenant_id",
-	// 			PartitionBy:       "created_at",
-	// 			PartitionType:     TypeRange,
-	// 			PartitionInterval: time.Hour * 24,
-	// 			RetentionPeriod:   time.Hour * 24 * 7,
-	// 			PartitionCount:    5,
-	// 		}
-	//
-	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-	// 		config := &Config{
-	// 			user_logsRate: time.Second,
-	// 			Tables: []Table{
-	// 				tableConfig,
-	// 			},
-	// 		}
-	//
-	// 		clock := NewSimulatedClock(time.Now())
-	//
-	// 		_, err := NewAndStart(db, config, logger, clock)
-	// 		require.NoError(t, err)
-	//
-	// 		// Verify partitions were created
-	// 		var partitionCount uint
-	// 		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant1%")
-	// 		require.NoError(t, err)
-	// 		require.Equal(t, tableConfig.PartitionCount, partitionCount)
-	//
-	// 		// Verify the partition naming format
-	// 		var partitionName string
-	// 		err = db.GetContext(ctx, &partitionName, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1 LIMIT 1", "user_logs_tenant1%")
-	// 		require.NoError(t, err)
-	// 		require.Contains(t, partitionName, "tenant1", "Partition name should include tenant ID")
-	//
-	// 		var exists bool
-	// 		err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.parent_tables where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
-	// 		require.NoError(t, err)
-	// 		require.True(t, exists)
-	// 	})
+
+	t.Run("CreateFuturePartitionsWithTenantId", func(t *testing.T) {
+		ctx := context.Background()
+
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		tableConfig := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
+			PartitionCount:    5,
+		}
+
+		tenant := Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "TENANT3",
+		}
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				tableConfig,
+			},
+		}
+
+		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		m, err := NewAndStart(db, config, logger, clock)
+		require.NoError(t, err)
+
+		result, err := m.RegisterTenant(ctx, tenant)
+		require.NoError(t, err)
+
+		if len(result.Errors) > 0 {
+			require.Fail(t, "expected no errors, but got some anyway", result.Errors)
+		}
+
+		// Wait for maintenance to complete
+		time.Sleep(time.Second * 2)
+
+		// Verify partitions were created
+		var partitionCount uint
+		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant3%")
+		require.NoError(t, err)
+		require.Equal(t, tableConfig.PartitionCount, partitionCount)
+
+		// Verify the partition naming format
+		var partitionName string
+		err = db.GetContext(ctx, &partitionName, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1 LIMIT 1", "user_logs_tenant3%")
+		require.NoError(t, err)
+		require.Contains(t, partitionName, "tenant3", "Partition name should include tenant ID")
+
+		var exists bool
+		err = db.QueryRowxContext(ctx, "select exists(select 1 from partman.tenants where id = $1);", tenant.TenantId).Scan(&exists)
+		require.NoError(t, err)
+		require.True(t, exists)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
 	//
 	// 	t.Run("CreateFuturePartitionsForMultipleTenants", func(t *testing.T) {
 	// 		db, pool := setupTestDB(t)
@@ -668,7 +683,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: 30 * time.Second,
+	// 			SampleRate: 30 * time.Second,
 	// 			Tables: []Table{
 	// 				tenantOneConfig,
 	// 				tenantTwoConfig,
@@ -741,7 +756,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Setup manager config with two tenants
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -845,7 +860,7 @@ func TestManager(t *testing.T) {
 	// 			// Initialize manager
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -908,7 +923,7 @@ func TestManager(t *testing.T) {
 	// 			// Initialize manager
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -965,7 +980,7 @@ func TestManager(t *testing.T) {
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -1019,7 +1034,7 @@ func TestManager(t *testing.T) {
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -1087,7 +1102,7 @@ func TestManager(t *testing.T) {
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -1172,7 +1187,7 @@ func TestManager(t *testing.T) {
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -1250,7 +1265,7 @@ func TestManager(t *testing.T) {
 	//
 	// 			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 			config := &Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 			}
 	// 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	//
@@ -1300,7 +1315,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1329,7 +1344,7 @@ func TestManager(t *testing.T) {
 	// 	t.Run("Error - DB must not be nil", func(t *testing.T) {
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1360,7 +1375,7 @@ func TestManager(t *testing.T) {
 	// 		defer cleanupPartManDBs(t, db, pool)
 	//
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1409,7 +1424,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1446,7 +1461,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Initial configuration with two tenants
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -1542,7 +1557,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1582,7 +1597,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1620,7 +1635,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1681,7 +1696,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1717,7 +1732,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1800,7 +1815,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1880,7 +1895,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1956,7 +1971,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -1996,7 +2011,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -2054,7 +2069,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -2091,7 +2106,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:              "user_logs",
@@ -2158,7 +2173,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -2232,7 +2247,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		clock := NewSimulatedClock(time.Now())
@@ -2319,7 +2334,7 @@ func TestManager(t *testing.T) {
 	// 		}
 	//
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables:     []Table{initialTable},
 	// 		}
 	//
@@ -2355,7 +2370,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Initial config with empty tables
 	// 		config := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 		}
 	//
 	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
@@ -2460,7 +2475,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Create the manager with one table pre-configured
 	// 		newConfig := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:   "user_logs",
@@ -2552,7 +2567,7 @@ func TestManager(t *testing.T) {
 	//
 	// 		// Create the new manager with overlapping config
 	// 		newConfig := &Config{
-	// 			user_logsRate: time.Second,
+	// 			SampleRate: time.Second,
 	// 			Tables: []Table{
 	// 				{
 	// 					Name:   "user_logs",
@@ -2626,7 +2641,7 @@ func TestManager(t *testing.T) {
 	// 			WithDB(db),
 	// 			WithLogger(NewSlogLogger()),
 	// 			WithConfig(&Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 				Tables:     []Table{initialTable},
 	// 			}),
 	// 			WithClock(NewSimulatedClock(time.Now())),
@@ -2708,7 +2723,7 @@ func TestManager(t *testing.T) {
 	// 			WithDB(db),
 	// 			WithLogger(NewSlogLogger()),
 	// 			WithConfig(&Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 				Tables:     []Table{configTable},
 	// 			}),
 	// 			WithClock(NewSimulatedClock(time.Now())),
@@ -2743,7 +2758,7 @@ func TestManager(t *testing.T) {
 	// 			WithDB(db),
 	// 			WithLogger(NewSlogLogger()),
 	// 			WithConfig(&Config{
-	// 				user_logsRate: time.Second,
+	// 				SampleRate: time.Second,
 	// 				Tables:     []Table{initialTable},
 	// 			}),
 	// 			WithClock(NewSimulatedClock(time.Now())),

@@ -209,6 +209,7 @@ func TestManager(t *testing.T) {
 			require.Fail(t, "expected no errors, but got some anyway", result.Errors)
 		}
 
+		// Wait for maintenance to complete
 		time.Sleep(time.Second * 2)
 
 		var partitionCount uint
@@ -299,6 +300,7 @@ func TestManager(t *testing.T) {
 		_, err = NewAndStart(db, config, logger, clock)
 		require.NoError(t, err)
 
+		// Wait for maintenance to complete
 		time.Sleep(time.Second * 2)
 
 		var partitionCount uint
@@ -360,6 +362,7 @@ func TestManager(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 3, oldPartitionCount)
 
+		// Wait for maintenance to complete
 		time.Sleep(time.Second * 2)
 
 		var newPartitionCount int
@@ -370,51 +373,75 @@ func TestManager(t *testing.T) {
 		dropParentTables(t, ctx, db)
 		cleanupPartManDBs(t, db)
 	})
-	//
-	// 	t.Run("TestMaintainer", func(t *testing.T) {
-	// 		db, pool := setupTestDB(t)
-	// 		defer cleanupPartManDBs(t, db, pool)
-	//
-	// 		createParentTable(t, context.Background(), db)
-	// 		defer dropParentTables(t, context.Background(), db)
-	//
-	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-	// 		config := &Config{
-	// 			user_logsRate: time.Second,
-	// 			Tables: []Table{
-	// 				{
-	// 					Name:              "user_logs",
-	// 					Schema:            "test",
-	// 					PartitionType:     TypeRange,
-	// 					PartitionBy:       "created_at",
-	// 					PartitionInterval: time.Hour * 24,
-	// 					RetentionPeriod:   time.Hour * 24 * 7,
-	// 					PartitionCount:    2,
-	// 				},
-	// 			},
-	// 		}
-	//
-	// 		clock := NewSimulatedClock(time.Now())
-	//
-	// 		manager, err := NewAndStart(db, config, logger, clock)
-	// 		require.NoError(t, err)
-	//
-	// 		// Advance clock to trigger maintenance
-	// 		clock.AdvanceTime(time.Hour * 24)
-	//
-	// 		// Wait for maintenance to complete
-	// 		time.Sleep(2 * time.Second)
-	//
-	// 		// Stop the manager
-	// 		manager.Stop()
-	//
-	// 		// Verify partitions were created
-	// 		var partitionCount int
-	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_%")
-	// 		require.NoError(t, err)
-	// 		require.Greater(t, partitionCount, 0)
-	// 	})
-	//
+
+	t.Run("TestMaintainer", func(t *testing.T) {
+		ctx := context.Background()
+
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		tableConfig := Table{
+			Schema:            "test",
+			PartitionType:     TypeRange,
+			Name:              "user_logs",
+			PartitionBy:       "created_at",
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
+			PartitionCount:    2,
+		}
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				tableConfig,
+			},
+		}
+
+		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		m, err := NewAndStart(db, config, logger, clock)
+		require.NoError(t, err)
+
+		result, err := m.RegisterTenant(ctx, Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
+		})
+		require.NoError(t, err)
+
+		if len(result.Errors) > 0 {
+			require.Fail(t, "expected no errors, but got some anyway", result.Errors)
+		}
+
+		// Wait for maintenance to complete
+		time.Sleep(time.Second * 2)
+
+		// Verify partitions were created
+		var partitionCount int
+		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
+		require.NoError(t, err)
+		require.Greater(t, partitionCount, 0)
+		require.Equal(t, 2, partitionCount)
+
+		// Advance clock to trigger maintenance
+		clock.AdvanceTime(time.Hour * 24)
+
+		// Wait for maintenance to complete
+		time.Sleep(time.Second * 2)
+
+		// Stop the manager
+		m.Stop()
+
+		// Verify that a new partition was created
+		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
+		require.NoError(t, err)
+		require.Equal(t, 3, partitionCount)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
+
 	// 	t.Run("GeneratePartitionName", func(t *testing.T) {
 	// 		manager := &Manager{}
 	// 		bounds := Bounds{

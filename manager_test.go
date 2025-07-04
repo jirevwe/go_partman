@@ -309,44 +309,67 @@ func TestManager(t *testing.T) {
 		dropParentTables(t, ctx, db)
 		cleanupPartManDBs(t, db)
 	})
-	//
-	// 	t.Run("DropOldPartitions", func(t *testing.T) {
-	// 		db, pool := setupTestDB(t)
-	// 		defer cleanupPartManDBs(t, db, pool)
-	//
-	// 		createParentTable(t, context.Background(), db)
-	// 		defer dropParentTables(t, context.Background(), db)
-	//
-	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-	// 		config := &Config{
-	// 			user_logsRate: time.Second,
-	// 			Tables: []Table{
-	// 				{
-	// 					Name:              "user_logs",
-	// 					Schema:            "test",
-	// 					PartitionType:     TypeRange,
-	// 					PartitionBy:       "created_at",
-	// 					PartitionInterval: time.Hour * 24,
-	// 					RetentionPeriod:   time.Hour,
-	// 					PartitionCount:    2,
-	// 				},
-	// 			},
-	// 		}
-	// 		clock := NewSimulatedClock(time.Now())
-	//
-	// 		manager, err := NewAndStart(db, config, logger, clock)
-	// 		require.NoError(t, err)
-	//
-	// 		clock.AdvanceTime(time.Hour + time.Minute)
-	//
-	// 		err = manager.DropOldPartitions(context.Background())
-	// 		require.NoError(t, err)
-	//
-	// 		var partitionCount int
-	// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_%")
-	// 		require.NoError(t, err)
-	// 		require.Equal(t, 1, partitionCount)
-	// 	})
+
+	t.Run("DropOldPartitions", func(t *testing.T) {
+		ctx := context.Background()
+
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		_, err := db.ExecContext(ctx, `
+			CREATE TABLE if not exists test.user_logs_tenant1_20231201 PARTITION OF test.user_logs
+	    	FOR VALUES FROM ('tenant1', '2024-11-01 00:00:00+00'::timestamptz) TO ('tenant1','2024-11-02 00:00:00+00'::timestamptz);`)
+		require.NoError(t, err)
+
+		tableConfig := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			PartitionType:     TypeRange,
+			PartitionBy:       "created_at",
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour,
+			PartitionCount:    2,
+		}
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				tableConfig,
+			},
+		}
+		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		m, err := NewAndStart(db, config, logger, clock)
+		require.NoError(t, err)
+
+		result, err := m.RegisterTenant(ctx, Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
+		})
+		require.NoError(t, err)
+
+		if len(result.Errors) > 0 {
+			require.Fail(t, "expected no errors, but got some anyway", result.Errors)
+		}
+		clock.AdvanceTime(time.Hour * 2)
+
+		var oldPartitionCount int
+		err = db.GetContext(ctx, &oldPartitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
+		require.NoError(t, err)
+		require.Equal(t, 3, oldPartitionCount)
+
+		time.Sleep(time.Second * 2)
+
+		var newPartitionCount int
+		err = db.GetContext(ctx, &newPartitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
+		require.NoError(t, err)
+		require.Equal(t, 2, newPartitionCount)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
 	//
 	// 	t.Run("TestMaintainer", func(t *testing.T) {
 	// 		db, pool := setupTestDB(t)

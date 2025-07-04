@@ -530,38 +530,56 @@ func TestManager(t *testing.T) {
 			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.user_logs_TENANT1_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-03-15 00:00:00+00'::timestamptz) TO ('TENANT1', '2024-03-16 00:00:00+00'::timestamptz);", sql)
 		})
 	})
-	//
-	// 	t.Run("PartitionExists", func(t *testing.T) {
-	// 		db, pool := setupTestDB(t)
-	// 		defer cleanupPartManDBs(t, db, pool)
-	//
-	// 		createParentTable(t, context.Background(), db)
-	// 		defer dropParentTables(t, context.Background(), db)
-	//
-	// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-	// 		clock := NewSimulatedClock(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC))
-	// 		config := &Config{
-	// 			user_logsRate: time.Second,
-	// 			Tables: []Table{
-	// 				{
-	// 					Name:              "user_logs",
-	// 					Schema:            "test",
-	// 					RetentionPeriod:   time.Hour * 24,
-	// 					PartitionInterval: time.Hour * 24,
-	// 					PartitionType:     TypeRange,
-	// 					PartitionBy:       "created_at",
-	// 					PartitionCount:    2,
-	// 				},
-	// 			},
-	// 		}
-	//
-	// 		manager, err := NewAndStart(db, config, logger, clock)
-	// 		require.NoError(t, err)
-	//
-	// 		exists, err := manager.partitionExists(context.Background(), "user_logs_20240315", "test")
-	// 		require.NoError(t, err)
-	// 		require.True(t, exists)
-	// 	})
+
+	t.Run("PartitionExists", func(t *testing.T) {
+		ctx := context.Background()
+
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		tableConfig := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			RetentionPeriod:   time.Hour * 24,
+			PartitionInterval: time.Hour * 24,
+			PartitionType:     TypeRange,
+			PartitionBy:       "created_at",
+			PartitionCount:    2,
+		}
+
+		clock := NewSimulatedClock(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC))
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				tableConfig,
+			},
+		}
+
+		m, err := NewAndStart(db, config, logger, clock)
+		require.NoError(t, err)
+
+		result, err := m.RegisterTenant(ctx, Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant3",
+		})
+		require.NoError(t, err)
+
+		if len(result.Errors) > 0 {
+			require.Fail(t, "expected no errors, but got some anyway", result.Errors)
+		}
+
+		// Wait for maintenance to complete
+		time.Sleep(time.Second * 2)
+
+		exists, err := m.partitionExists(ctx, "user_logs_tenant3_20240315", "test")
+		require.NoError(t, err)
+		require.True(t, exists)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
 	//
 	// 	t.Run("CreateFuturePartitionsWithTenantId", func(t *testing.T) {
 	// 		db, pool := setupTestDB(t)

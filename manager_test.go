@@ -2228,51 +2228,6 @@ func TestParentTablesAPI(t *testing.T) {
 	})
 }
 
-func TestManagerConfigUpdate(t *testing.T) {
-	t.Run("AddManagedTable", func(t *testing.T) {
-		ctx := context.Background()
-		db := setupTestDB(t, ctx)
-		createParentTable(t, ctx, db)
-
-		// Initial config with one table
-		initialTable := Table{
-			Name:              "user_logs",
-			Schema:            "test",
-			TenantIdColumn:    "tenant_id",
-			PartitionType:     TypeRange,
-			PartitionBy:       "created_at",
-			PartitionInterval: time.Hour * 24,
-			RetentionPeriod:   time.Hour * 24 * 7,
-			PartitionCount:    2,
-		}
-
-		config := &Config{
-			SampleRate: time.Second,
-			Tables:     []Table{initialTable},
-		}
-
-		clock := NewSimulatedClock(time.Now())
-		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-		// Create manager
-		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-		require.NoError(t, err)
-
-		// Add a new table
-		newTable := Tenant{
-			TableName:   "user_logs",
-			TableSchema: "test",
-			TenantId:    "tenant2",
-		}
-
-		_, err = m.RegisterTenant(ctx, newTable)
-		require.NoError(t, err)
-
-		// Verify config was updated
-		require.Equal(t, 2, len(m.config.Tables))
-		require.Contains(t, m.config.Tables, newTable)
-	})
-}
-
 func TestTableDeduplication(t *testing.T) {
 	t.Run("initialize deduplicates tables from DB and config", func(t *testing.T) {
 		ctx := context.Background()

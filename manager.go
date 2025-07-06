@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"gopkg.in/guregu/null.v4"
 	"regexp"
 	"strings"
 	"sync"
@@ -112,9 +113,11 @@ func (m *Manager) GetConfig() Config {
 func (m *Manager) runMigrations(ctx context.Context) error {
 	migrations := []string{
 		createSchema,
-		createParentTableTable,
+		createParentsTable,
 		createTenantsTable,
 		createPartitionsTable,
+		createValidateTenantFunction,
+		createTriggerOnPartitionInsert,
 	}
 
 	tx, err := m.db.Begin()
@@ -489,14 +492,14 @@ func (m *Manager) importExistingPartitions(ctx context.Context, tc Table) error 
 
 	// Query to get all tables that look like partitions but aren't yet managed
 	type unManagedPartition struct {
-		TenantFrom    string `db:"tenant_from"`
-		TenantTo      string `db:"tenant_to"`
-		TimestampFrom string `db:"timestamp_from"`
-		TimestampTo   string `db:"timestamp_to"`
-		PartitionName string `db:"partition_name"`
-		PartitionExpr string `db:"partition_expression"`
-		ParentSchema  string `db:"parent_schema"`
-		ParentTable   string `db:"parent_table"`
+		TenantFrom    null.String `db:"tenant_from"`
+		TenantTo      null.String `db:"tenant_to"`
+		TimestampFrom string      `db:"timestamp_from"`
+		TimestampTo   string      `db:"timestamp_to"`
+		PartitionName string      `db:"partition_name"`
+		PartitionExpr string      `db:"partition_expression"`
+		ParentSchema  string      `db:"parent_schema"`
+		ParentTable   string      `db:"parent_table"`
 	}
 
 	var unManagedPartitions []unManagedPartition
@@ -507,11 +510,11 @@ func (m *Manager) importExistingPartitions(ctx context.Context, tc Table) error 
 	// Process unmanaged partitions
 	for _, p := range unManagedPartitions {
 		// Create tenant from imported partition if tenant ID exists
-		if len(p.TenantFrom) > 0 {
+		if len(p.TenantFrom.String) > 0 {
 			tenant := Tenant{
 				TableName:   tc.Name,
 				TableSchema: tc.Schema,
-				TenantId:    p.TenantFrom,
+				TenantId:    p.TenantFrom.String,
 			}
 
 			m.logger.Info("creating tenant from imported partition", "table_id", tc.Id)
@@ -568,11 +571,11 @@ func (m *Manager) importExistingPartitions(ctx context.Context, tc Table) error 
 		partition := Partition{
 			Name:        p.PartitionName,
 			Bounds:      Bounds{From: from, To: to},
-			TenantId:    p.TenantFrom,
+			TenantId:    p.TenantFrom.String,
 			ParentTable: tc,
 		}
 
-		err = m.checkTableColumnsExist(ctx, tc, p.TenantFrom)
+		err = m.checkTableColumnsExist(ctx, tc, p.TenantFrom.String)
 		if err != nil {
 			errString = append(errString, err.Error())
 			continue

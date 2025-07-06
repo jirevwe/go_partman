@@ -2,12 +2,12 @@ package partman
 
 var createSchema = `CREATE SCHEMA IF NOT EXISTS partman;`
 
-var createParentTableTable = `
+var createParentsTable = `
 CREATE TABLE IF NOT EXISTS partman.parent_tables (
     id VARCHAR PRIMARY KEY,
     schema_name VARCHAR NOT NULL,
     table_name VARCHAR NOT NULL,
-    tenant_column VARCHAR NOT NULL,
+    tenant_column VARCHAR,
     partition_by VARCHAR NOT NULL,
     partition_type VARCHAR NOT NULL,
     partition_interval VARCHAR NOT NULL,
@@ -45,6 +45,29 @@ CREATE TABLE IF NOT EXISTS partman.partitions (
         REFERENCES partman.tenants(parent_table_id, id) ON DELETE CASCADE,
     UNIQUE(parent_table_id, tenant_id, partition_bounds_from, partition_bounds_to)
 );`
+
+var createValidateTenantFunction = `
+CREATE OR REPLACE FUNCTION partman.validate_tenant_id() RETURNS TRIGGER AS $$
+BEGIN
+    -- If tenant_id is provided, ensure it exists for this parent table
+    IF NEW.tenant_id IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM partman.tenants 
+            WHERE parent_table_id = NEW.parent_table_id 
+            AND id = NEW.tenant_id
+        ) THEN
+            RAISE EXCEPTION 'Tenant % does not exist for parent table %', 
+                NEW.tenant_id, NEW.parent_table_id;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;`
+
+var createTriggerOnPartitionInsert = `
+CREATE OR REPLACE TRIGGER validate_tenant_id_trigger
+    BEFORE INSERT OR UPDATE ON partman.partitions
+    FOR EACH ROW EXECUTE FUNCTION partman.validate_tenant_id()`
 
 var upsertSQL = `
 INSERT INTO partman.partitions (

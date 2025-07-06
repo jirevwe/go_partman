@@ -565,7 +565,7 @@ func TestManager(t *testing.T) {
 	})
 
 	t.Run("GeneratePartitionName", func(t *testing.T) {
-		manager := &Manager{}
+		m := &Manager{}
 		bounds := Bounds{
 			From: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
 			To:   time.Date(2024, 3, 16, 0, 0, 0, 0, time.UTC),
@@ -575,7 +575,7 @@ func TestManager(t *testing.T) {
 			tableConfig := Tenant{
 				TableName: "user_logs",
 			}
-			name := manager.generatePartitionName(tableConfig, bounds)
+			name := m.generatePartitionName(tableConfig, bounds)
 			require.Equal(t, "user_logs_20240315", name)
 		})
 
@@ -584,13 +584,13 @@ func TestManager(t *testing.T) {
 				TableName: "user_logs",
 				TenantId:  "TENANT1",
 			}
-			name := manager.generatePartitionName(tableConfig, bounds)
+			name := m.generatePartitionName(tableConfig, bounds)
 			require.Equal(t, "user_logs_TENANT1_20240315", name)
 		})
 	})
 
 	t.Run("GeneratePartitionSQL", func(t *testing.T) {
-		manager := &Manager{}
+		m := &Manager{}
 		bounds := Bounds{
 			From: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
 			To:   time.Date(2024, 3, 16, 0, 0, 0, 0, time.UTC),
@@ -609,17 +609,17 @@ func TestManager(t *testing.T) {
 				PartitionBy:   "created_at",
 			}
 
-			manager.config = &Config{
+			m.config = &Config{
 				SampleRate: time.Second,
 				Tables: []Table{
 					tableConfig,
 				},
 			}
 
-			partitionName := manager.generatePartitionName(tenant, bounds)
+			partitionName := m.generatePartitionName(tenant, bounds)
 			require.Equal(t, "user_logs_20240315", partitionName)
 
-			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
+			sql, err := m.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
 			require.NoError(t, err)
 			require.Equal(t, sql, "CREATE TABLE IF NOT EXISTS test.user_logs_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('2024-03-15 00:00:00+00'::timestamptz) TO ('2024-03-16 00:00:00+00'::timestamptz);")
 		})
@@ -637,17 +637,17 @@ func TestManager(t *testing.T) {
 				PartitionType: TypeRange,
 				PartitionBy:   "created_at",
 			}
-			manager.config = &Config{
+			m.config = &Config{
 				SampleRate: time.Second,
 				Tables: []Table{
 					tableConfig,
 				},
 			}
 
-			partitionName := manager.generatePartitionName(tenant, bounds)
+			partitionName := m.generatePartitionName(tenant, bounds)
 			require.Equal(t, "user_logs_TENANT1_20240315", partitionName)
 
-			sql, err := manager.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
+			sql, err := m.generatePartitionSQL(partitionName, tableConfig, tenant, bounds)
 			require.NoError(t, err)
 			require.Equal(t, "CREATE TABLE IF NOT EXISTS test.user_logs_TENANT1_20240315 PARTITION OF test.user_logs FOR VALUES FROM ('TENANT1', '2024-03-15 00:00:00+00'::timestamptz) TO ('TENANT1', '2024-03-16 00:00:00+00'::timestamptz);", sql)
 		})
@@ -1481,8 +1481,10 @@ func TestManager(t *testing.T) {
 				TenantID  string `db:"tenant_id"`
 			}
 			err = db.SelectContext(ctx, &managedTables, `
-					SELECT table_name, tenant_id
-					FROM partman.partitions`)
+					SELECT pt.table_name, p.tenant_id
+					FROM partman.partitions p 
+					join partman.parent_tables pt on 
+					pt.id = p.parent_table_id`)
 			t.Logf("%+v", managedTables)
 			require.NoError(t, err)
 			require.Len(t, managedTables, 2)
@@ -1577,729 +1579,655 @@ func TestManager(t *testing.T) {
 	})
 }
 
-//
-// func TestParentTablesAPI(t *testing.T) {
-// 	t.Run("CreateParentTable", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		parentTable := Table{
-// 			Name:              "user_logs",
-// 			Schema:            "test",
-// 			TenantIdColumn:    "project_id",
-// 			PartitionBy:       "created_at",
-// 			PartitionType:     TypeRange,
-// 			PartitionInterval: time.Hour * 24,
-// 			PartitionCount:    5,
-// 			RetentionPeriod:   time.Hour * 24 * 7,
-// 		}
-//
-// 		_, err = m.CreateParentTable(context.Background(), parentTable)
-// 		require.NoError(t, err)
-//
-// 		// Verify that the parent table was created in the database
-// 		var count int
-// 		err = db.Get(&count, "SELECT COUNT(*) FROM partman.parent_tables WHERE table_name = $1", "user_logs")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 1, count)
-//
-// 		dropParentTables(t, ctx, db)
-// 		cleanupPartManDBs(t, db)
-// 	})
-//
-// 	t.Run("CreateParentWithInvalidTable", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		parentTable := Table{
-// 			Name:              "nonexistent_table",
-// 			Schema:            "test",
-// 			TenantIdColumn:    "project_id",
-// 			PartitionBy:       "created_at",
-// 			PartitionType:     TypeRange,
-// 			PartitionInterval: time.Hour * 24,
-// 			PartitionCount:    5,
-// 			RetentionPeriod:   time.Hour * 24 * 7,
-// 		}
-//
-// 		_, err = manager.CreateParentTable(context.Background(), parentTable)
-// 		require.Error(t, err)
-// 		require.Contains(t, err.Error(), "table validation failed")
-//
-// 		dropParentTables(t, ctx, db)
-// 		cleanupPartManDBs(t, db)
-// 	})
-//
-// 	t.Run("RegisterTenant", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-// 		// First, create the parent table
-// 		parentTable := Table{
-// 			Name:              "user_logs",
-// 			Schema:            "test",
-// 			TenantIdColumn:    "project_id",
-// 			PartitionBy:       "created_at",
-// 			PartitionType:     TypeRange,
-// 			PartitionInterval: time.Hour * 24,
-// 			PartitionCount:    3,
-// 			RetentionPeriod:   time.Hour * 24 * 7,
-// 		}
-//
-// 		_, err = manager.CreateParentTable(context.Background(), parentTable)
-// 		require.NoError(t, err)
-//
-// 		// Register a tenant
-// 		tenant := Tenant{
-// 			TableName:   "user_logs",
-// 			TableSchema: "test",
-// 			TenantId:    "tenant1",
-// 		}
-//
-// 		result, err := manager.RegisterTenant(context.Background(), tenant)
-// 		require.NoError(t, err)
-// 		require.NotNil(t, result)
-// 		require.Equal(t, "tenant1", result.TenantId)
-// 		require.Equal(t, "user_logs", result.TableName)
-// 		require.Equal(t, 3, result.PartitionsCreated)
-// 		require.Empty(t, result.Errors)
-//
-// 		// Verify that the tenant was registered in the database
-// 		var count int
-// 		err = db.Get(&count, "SELECT COUNT(*) FROM partman.tenants WHERE tenant_id = $1", "tenant1")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 1, count)
-//
-// 		// Verify partitions were created
-// 		var partitionCount int
-// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant1%")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 3, partitionCount)
-// 	})
-//
-// 	t.Run("RegisterTenantWithNonExistentParent", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		tenant := Tenant{
-// 			TableName:   "nonexistent_table",
-// 			TableSchema: "test",
-// 			TenantId:    "tenant1",
-// 		}
-//
-// 		result, err := manager.RegisterTenant(context.Background(), tenant)
-// 		require.NoError(t, err)
-// 		require.NotNil(t, result)
-// 		require.Equal(t, "tenant1", result.TenantId)
-// 		require.NotEmpty(t, result.Errors)
-// 		require.Contains(t, result.Errors[0].Error(), "parent table not found")
-// 	})
-//
-// 	t.Run("RegisterMultipleTenants", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		// Create the parent table
-// 		parentTable := Table{
-// 			Name:              "user_logs",
-// 			Schema:            "test",
-// 			TenantIdColumn:    "project_id",
-// 			PartitionBy:       "created_at",
-// 			PartitionType:     TypeRange,
-// 			PartitionInterval: time.Hour * 24,
-// 			PartitionCount:    2,
-// 			RetentionPeriod:   time.Hour * 24 * 7,
-// 		}
-//
-// 		_, err = manager.CreateParentTable(context.Background(), parentTable)
-// 		require.NoError(t, err)
-//
-// 		// Register multiple tenants
-// 		tenants := []Tenant{
-// 			{
-// 				TableName:   "user_logs",
-// 				TableSchema: "test",
-// 				TenantId:    "tenant1",
-// 			},
-// 			{
-// 				TableName:   "user_logs",
-// 				TableSchema: "test",
-// 				TenantId:    "tenant2",
-// 			},
-// 			{
-// 				TableName:   "user_logs",
-// 				TableSchema: "test",
-// 				TenantId:    "tenant3",
-// 			},
-// 		}
-//
-// 		results, err := manager.RegisterTenants(context.Background(), tenants)
-// 		require.NoError(t, err)
-// 		require.Len(t, results, 3)
-//
-// 		// Verify all tenants were registered successfully
-// 		for i, result := range results {
-// 			require.Equal(t, fmt.Sprintf("tenant%d", i+1), result.TenantId)
-// 			require.Equal(t, "user_logs", result.TableName)
-// 			require.Equal(t, 2, result.PartitionsCreated)
-// 			require.Empty(t, result.Errors)
-// 		}
-//
-// 		// Verify all tenants exist in the database
-// 		var count int
-// 		err = db.Get(&count, "SELECT COUNT(*) FROM partman.tenants WHERE parent_table_name = $1", "user_logs")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 3, count)
-//
-// 		// Verify partitions were created for all tenants
-// 		for _, tenant := range tenants {
-// 			var partitionCount int
-// 			err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", fmt.Sprintf("user_logs_%s%%", tenant.TenantId))
-// 			require.NoError(t, err)
-// 			require.Equal(t, 2, partitionCount)
-// 		}
-// 	})
-//
-// 	t.Run("GetParentTables", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		// Create multiple parent tables
-// 		parentTables := []Table{
-// 			{
-// 				Name:              "user_logs",
-// 				Schema:            "test",
-// 				TenantIdColumn:    "project_id",
-// 				PartitionBy:       "created_at",
-// 				PartitionType:     TypeRange,
-// 				PartitionInterval: time.Hour * 24,
-// 				PartitionCount:    5,
-// 				RetentionPeriod:   time.Hour * 24 * 7,
-// 			},
-// 			{
-// 				Name:              "delivery_attempts",
-// 				Schema:            "test",
-// 				TenantIdColumn:    "", // No tenant column for this table
-// 				PartitionBy:       "created_at",
-// 				PartitionType:     TypeRange,
-// 				PartitionInterval: time.Hour * 12,
-// 				PartitionCount:    3,
-// 				RetentionPeriod:   time.Hour * 24 * 3,
-// 			},
-// 		}
-//
-// 		// Create the delivery_attempts table first
-// 		createParentTableWithoutTenant(t, context.Background(), db)
-//
-// 		for _, pt := range parentTables {
-// 			_, err = manager.CreateParentTable(context.Background(), pt)
-// 			require.NoError(t, err)
-// 		}
-//
-// 		// Get all parent tables
-// 		retrievedTables, err := manager.GetParentTables(context.Background())
-// 		require.NoError(t, err)
-// 		require.Len(t, retrievedTables, 2)
-//
-// 		// Verify the tables were retrieved correctly
-// 		tableMap := make(map[string]Table)
-// 		for _, table := range retrievedTables {
-// 			tableMap[table.Name] = table
-// 		}
-//
-// 		userLogs, exists := tableMap["user_logs"]
-// 		require.True(t, exists)
-// 		require.Equal(t, "test", userLogs.Schema)
-// 		require.Equal(t, "project_id", userLogs.TenantIdColumn)
-// 		require.Equal(t, uint(5), userLogs.PartitionCount)
-// 		require.Equal(t, time.Hour*24*7, userLogs.RetentionPeriod)
-//
-// 		deliveryAttempts, exists := tableMap["delivery_attempts"]
-// 		require.True(t, exists)
-// 		require.Equal(t, "test", deliveryAttempts.Schema)
-// 		require.Equal(t, "", deliveryAttempts.TenantIdColumn) // No tenant column
-// 		require.Equal(t, uint(3), deliveryAttempts.PartitionCount)
-// 		require.Equal(t, time.Hour*24*3, deliveryAttempts.RetentionPeriod)
-// 	})
-//
-// 	t.Run("GetTenants", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		// Create parent table
-// 		parentTable := Table{
-// 			Name:              "user_logs",
-// 			Schema:            "test",
-// 			TenantIdColumn:    "project_id",
-// 			PartitionBy:       "created_at",
-// 			PartitionType:     TypeRange,
-// 			PartitionInterval: time.Hour * 24,
-// 			PartitionCount:    2,
-// 			RetentionPeriod:   time.Hour * 24 * 7,
-// 		}
-//
-// 		_, err = manager.CreateParentTable(context.Background(), parentTable)
-// 		require.NoError(t, err)
-//
-// 		// Register multiple tenants
-// 		tenants := []Tenant{
-// 			{
-// 				TableName:   "user_logs",
-// 				TableSchema: "test",
-// 				TenantId:    "tenant1",
-// 			},
-// 			{
-// 				TableName:   "user_logs",
-// 				TableSchema: "test",
-// 				TenantId:    "tenant2",
-// 			},
-// 			{
-// 				TableName:   "user_logs",
-// 				TableSchema: "test",
-// 				TenantId:    "tenant3",
-// 			},
-// 		}
-//
-// 		for _, tenant := range tenants {
-// 			_, err = manager.RegisterTenant(context.Background(), tenant)
-// 			require.NoError(t, err)
-// 		}
-//
-// 		// Get tenants for the parent table
-// 		retrievedTenants, err := manager.GetTenants(context.Background(), "user_logs", "test")
-// 		require.NoError(t, err)
-// 		require.Len(t, retrievedTenants, 3)
-//
-// 		// Verify all tenants were retrieved
-// 		tenantIds := make(map[string]bool)
-// 		for _, tenant := range retrievedTenants {
-// 			tenantIds[tenant.TenantId] = true
-// 			require.Equal(t, "user_logs", tenant.TableName)
-// 			require.Equal(t, "test", tenant.TableSchema)
-// 		}
-//
-// 		require.True(t, tenantIds["tenant1"])
-// 		require.True(t, tenantIds["tenant2"])
-// 		require.True(t, tenantIds["tenant3"])
-// 	})
-//
-// 	t.Run("GetTenantsForNonExistentTable", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		tenants, err := manager.GetTenants(context.Background(), "nonexistent_table", "test")
-// 		require.NoError(t, err)
-// 		require.Empty(t, tenants)
-// 	})
-//
-// 	t.Run("RegisterTenantWithExistingPartitions", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		// Create some existing partitions manually
-// 		existingPartitions := []string{
-// 			`CREATE TABLE test.user_logs_tenant1_20240101 PARTITION OF test.user_logs
-// 			 FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`,
-// 			`CREATE TABLE test.user_logs_tenant1_20240102 PARTITION OF test.user_logs
-// 			 FOR VALUES FROM ('tenant1', '2024-01-02') TO ('tenant1', '2024-01-03')`,
-// 		}
-//
-// 		for _, partition := range existingPartitions {
-// 			_, err := db.ExecContext(context.Background(), partition)
-// 			require.NoError(t, err)
-// 		}
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		// Create parent table
-// 		parentTable := Table{
-// 			Name:              "user_logs",
-// 			Schema:            "test",
-// 			TenantIdColumn:    "project_id",
-// 			PartitionBy:       "created_at",
-// 			PartitionType:     TypeRange,
-// 			PartitionInterval: time.Hour * 24,
-// 			PartitionCount:    5,
-// 			RetentionPeriod:   time.Hour * 24 * 7,
-// 		}
-//
-// 		_, err = manager.CreateParentTable(context.Background(), parentTable)
-// 		require.NoError(t, err)
-//
-// 		// Register tenant
-// 		tenant := Tenant{
-// 			TableName:   "user_logs",
-// 			TableSchema: "test",
-// 			TenantId:    "tenant1",
-// 		}
-//
-// 		result, err := manager.RegisterTenant(context.Background(), tenant)
-// 		require.NoError(t, err)
-// 		require.NotNil(t, result)
-// 		require.Equal(t, "tenant1", result.TenantId)
-// 		require.Equal(t, 5, result.PartitionsCreated)
-// 		require.Empty(t, result.Errors)
-//
-// 		// Verify total partitions (existing + new)
-// 		var partitionCount int
-// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant1%")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 7, partitionCount) // 2 existing + 5 new
-// 	})
-//
-// 	t.Run("ParentTableWithConfigInitialization", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 			Tables: []Table{
-// 				{
-// 					Name:              "user_logs",
-// 					Schema:            "test",
-// 					TenantIdColumn:    "project_id",
-// 					PartitionBy:       "created_at",
-// 					PartitionType:     TypeRange,
-// 					PartitionInterval: time.Hour * 24,
-// 					PartitionCount:    3,
-// 					RetentionPeriod:   time.Hour * 24 * 7,
-// 				},
-// 			},
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-// 		require.NotNil(t, manager)
-//
-// 		// Verify parent table was created
-// 		var count int
-// 		err = db.Get(&count, "SELECT COUNT(*) FROM partman.parent_tables WHERE table_name = $1", "user_logs")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 1, count)
-// 	})
-//
-// 	t.Run("MixedLegacyAndParentTablesAPI", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 			Tables: []Table{
-// 				{
-// 					Name:              "user_logs",
-// 					Schema:            "test",
-// 					TenantIdColumn:    "project_id",
-// 					PartitionBy:       "created_at",
-// 					PartitionType:     TypeRange,
-// 					PartitionInterval: time.Hour * 24,
-// 					PartitionCount:    2,
-// 					RetentionPeriod:   time.Hour * 24 * 7,
-// 				},
-// 			},
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-// 		require.NotNil(t, manager)
-//
-// 		// Verify both legacy and parent table configurations exist
-// 		var legacyCount int
-// 		err = db.Get(&legacyCount, "SELECT COUNT(*) FROM partman.parent_tables WHERE tenant_id = $1", "legacy_tenant")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 1, legacyCount)
-//
-// 		var parentCount int
-// 		err = db.Get(&parentCount, "SELECT COUNT(*) FROM partman.parent_tables WHERE table_name = $1", "user_logs")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 1, parentCount)
-//
-// 		// Register a new tenant using the parent table API
-// 		tenant := Tenant{
-// 			TableName:   "user_logs",
-// 			TableSchema: "test",
-// 			TenantId:    "new_tenant",
-// 		}
-//
-// 		result, err := m.RegisterTenant(context.Background(), tenant)
-// 		require.NoError(t, err)
-// 		require.NotNil(t, result)
-// 		require.Equal(t, "new_tenant", result.TenantId)
-// 		require.Equal(t, 3, result.PartitionsCreated)
-// 		require.Empty(t, result.Errors)
-//
-// 		// Verify both tenants have partitions
-// 		var legacyPartitions int
-// 		err = db.Get(&legacyPartitions, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_legacy_tenant%")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 2, legacyPartitions)
-//
-// 		var newPartitions int
-// 		err = db.Get(&newPartitions, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_new_tenant%")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 3, newPartitions)
-// 	})
-//
-// 	t.Run("TenantRegistrationWithDataInsertion", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		// Create parent table
-// 		parentTable := Table{
-// 			Name:              "user_logs",
-// 			Schema:            "test",
-// 			TenantIdColumn:    "project_id",
-// 			PartitionBy:       "created_at",
-// 			PartitionType:     TypeRange,
-// 			PartitionInterval: time.Hour * 24,
-// 			PartitionCount:    3,
-// 			RetentionPeriod:   time.Hour * 24 * 7,
-// 		}
-//
-// 		_, err = manager.CreateParentTable(context.Background(), parentTable)
-// 		require.NoError(t, err)
-//
-// 		// Register tenant
-// 		tenant := Tenant{
-// 			TableName:   "user_logs",
-// 			TableSchema: "test",
-// 			TenantId:    "tenant1",
-// 		}
-//
-// 		result, err := manager.RegisterTenant(context.Background(), tenant)
-// 		require.NoError(t, err)
-// 		require.NotNil(t, result)
-// 		require.Empty(t, result.Errors)
-//
-// 		// Insert data for the tenant
-// 		insertSQL := `INSERT INTO test.user_logs (id, project_id, created_at, data) VALUES ($1, $2, $3, $4)`
-// 		for i := 0; i < 10; i++ {
-// 			_, err = db.ExecContext(context.Background(), insertSQL,
-// 				ulid.Make().String(),
-// 				"tenant1",
-// 				clock.Now().Add(time.Duration(i)*time.Hour),
-// 				fmt.Sprintf(`{"message": "test %d"}`, i),
-// 			)
-// 			require.NoError(t, err)
-// 		}
-//
-// 		// Verify data was inserted correctly
-// 		var count int
-// 		err = db.Get(&count, "SELECT COUNT(*) FROM test.user_logs WHERE project_id = $1", "tenant1")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 10, count)
-//
-// 		// Verify data is distributed across partitions
-// 		var partitionCount int
-// 		err = db.Get(&partitionCount, "SELECT COUNT(DISTINCT schemaname || '.' || tablename) FROM pg_tables WHERE tablename LIKE 'user_logs_tenant1%'")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 3, partitionCount)
-// 	})
-//
-// 	t.Run("TenantRegistrationResultValidation", func(t *testing.T) {
-// 		ctx := context.Background()
-// 		db := setupTestDB(t, ctx)
-// 		createParentTable(t, ctx, db)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
-// 		require.NoError(t, err)
-//
-// 		// Create parent table
-// 		parentTable := Table{
-// 			Name:              "user_logs",
-// 			Schema:            "test",
-// 			TenantIdColumn:    "project_id",
-// 			PartitionBy:       "created_at",
-// 			PartitionType:     TypeRange,
-// 			PartitionInterval: time.Hour * 24,
-// 			PartitionCount:    2,
-// 			RetentionPeriod:   time.Hour * 24 * 7,
-// 		}
-//
-// 		_, err = manager.CreateParentTable(context.Background(), parentTable)
-// 		require.NoError(t, err)
-//
-// 		// Register tenant
-// 		tenant := Tenant{
-// 			TableName:   "user_logs",
-// 			TableSchema: "test",
-// 			TenantId:    "tenant1",
-// 		}
-//
-// 		result, err := manager.RegisterTenant(context.Background(), tenant)
-// 		require.NoError(t, err)
-// 		require.NotNil(t, result)
-//
-// 		// Validate result structure
-// 		require.Equal(t, "tenant1", result.TenantId)
-// 		require.Equal(t, "user_logs", result.TableName)
-// 		require.Equal(t, "test", result.TableSchema)
-// 		require.Equal(t, 2, result.PartitionsCreated)
-// 		require.Empty(t, result.Errors)
-//
-// 		// Test with invalid tenant (should return error in a result)
-// 		invalidTenant := Tenant{
-// 			TableName:   "nonexistent_table",
-// 			TableSchema: "test",
-// 			TenantId:    "tenant2",
-// 		}
-//
-// 		invalidResult, err := manager.RegisterTenant(context.Background(), invalidTenant)
-// 		require.NoError(t, err)
-// 		require.NotNil(t, invalidResult)
-// 		require.Equal(t, "tenant2", invalidResult.TenantId)
-// 		require.NotEmpty(t, invalidResult.Errors)
-// 		require.Contains(t, invalidResult.Errors[0].Error(), "parent table not found")
-// 	})
-// }
+func TestParentTablesAPI(t *testing.T) {
+	t.Run("CreateParentTable", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		createParentTable(t, context.Background(), db)
+		defer dropParentTables(t, context.Background(), db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		parentTable := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			PartitionCount:    5,
+			RetentionPeriod:   time.Hour * 24 * 7,
+		}
+
+		_, err = m.CreateParentTable(context.Background(), parentTable)
+		require.NoError(t, err)
+
+		// Verify that the parent table was created in the database
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM partman.parent_tables WHERE table_name = $1", "user_logs")
+		require.NoError(t, err)
+		require.Equal(t, 1, count)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
+
+	t.Run("CreateParentWithInvalidTable", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		parentTable := Table{
+			Name:              "nonexistent_table",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			RetentionPeriod:   time.Hour * 24 * 7,
+			PartitionCount:    5,
+		}
+
+		_, err = m.CreateParentTable(context.Background(), parentTable)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "table validation failed")
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
+
+	t.Run("RegisterTenant", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+		// First, create the parent table
+		parentTable := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			PartitionCount:    3,
+			RetentionPeriod:   time.Hour * 24 * 7,
+		}
+
+		_, err = m.CreateParentTable(context.Background(), parentTable)
+		require.NoError(t, err)
+
+		// Register a tenant
+		tenant := Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
+		}
+
+		result, err := m.RegisterTenant(context.Background(), tenant)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, "tenant1", result.TenantId)
+		require.Equal(t, "user_logs", result.TableName)
+		require.Equal(t, 3, result.PartitionsCreated)
+		require.Empty(t, result.Errors)
+
+		// Verify that the tenant was registered in the database
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM partman.tenants WHERE id = $1", "tenant1")
+		require.NoError(t, err)
+		require.Equal(t, 1, count)
+
+		// Verify partitions were created
+		var partitionCount int
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant1%")
+		require.NoError(t, err)
+		require.Equal(t, 3, partitionCount)
+	})
+
+	t.Run("RegisterTenantWithNonExistentParent", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		tenant := Tenant{
+			TableName:   "nonexistent_table",
+			TableSchema: "test",
+			TenantId:    "tenant1",
+		}
+
+		result, err := m.RegisterTenant(context.Background(), tenant)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, "tenant1", result.TenantId)
+		require.NotEmpty(t, result.Errors)
+		require.Contains(t, result.Errors[0].Error(), "parent table not found")
+	})
+
+	t.Run("RegisterMultipleTenants", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		createParentTable(t, context.Background(), db)
+		defer dropParentTables(t, context.Background(), db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		// Create the parent table
+		parentTable := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			PartitionCount:    2,
+			RetentionPeriod:   time.Hour * 24 * 7,
+		}
+
+		parentTableId, err := m.CreateParentTable(context.Background(), parentTable)
+		require.NoError(t, err)
+
+		// Register multiple tenants
+		tenants := []Tenant{
+			{
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant1",
+			},
+			{
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant2",
+			},
+			{
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant3",
+			},
+		}
+
+		results, err := m.RegisterTenants(context.Background(), tenants...)
+		require.NoError(t, err)
+		require.Len(t, results, 3)
+
+		// Verify all tenants were registered successfully
+		for i, result := range results {
+			require.Equal(t, fmt.Sprintf("tenant%d", i+1), result.TenantId)
+			require.Equal(t, "user_logs", result.TableName)
+			require.Equal(t, 2, result.PartitionsCreated)
+			require.Empty(t, result.Errors)
+		}
+
+		// Verify all tenants exist in the database
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM partman.tenants WHERE parent_table_id = $1", parentTableId)
+		require.NoError(t, err)
+		require.Equal(t, 3, count)
+
+		// Verify partitions were created for all tenants
+		for _, tenant := range tenants {
+			var partitionCount int
+			err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", fmt.Sprintf("user_logs_%s%%", tenant.TenantId))
+			require.NoError(t, err)
+			require.Equal(t, 2, partitionCount)
+		}
+	})
+
+	t.Run("GetParentTables", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		createParentTable(t, context.Background(), db)
+		defer dropParentTables(t, context.Background(), db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		// Create multiple parent tables
+		parentTables := []Table{
+			{
+				Name:              "user_logs",
+				Schema:            "test",
+				TenantIdColumn:    "project_id",
+				PartitionBy:       "created_at",
+				PartitionType:     TypeRange,
+				PartitionInterval: time.Hour * 24,
+				PartitionCount:    5,
+				RetentionPeriod:   time.Hour * 24 * 7,
+			},
+			{
+				Name:              "delivery_attempts",
+				Schema:            "test",
+				TenantIdColumn:    "", // No tenant column for this table
+				PartitionBy:       "created_at",
+				PartitionType:     TypeRange,
+				PartitionInterval: time.Hour * 12,
+				PartitionCount:    3,
+				RetentionPeriod:   time.Hour * 24 * 3,
+			},
+		}
+
+		// Create the delivery_attempts table first
+		createParentTableWithoutTenant(t, context.Background(), db)
+
+		for _, pt := range parentTables {
+			_, err = m.CreateParentTable(context.Background(), pt)
+			require.NoError(t, err)
+		}
+
+		// Get all parent tables
+		retrievedTables, err := m.GetParentTables(context.Background())
+		require.NoError(t, err)
+		require.Len(t, retrievedTables, 2)
+
+		// Verify the tables were retrieved correctly
+		tableMap := make(map[string]Table)
+		for _, table := range retrievedTables {
+			tableMap[table.Name] = table
+		}
+
+		userLogs, exists := tableMap["user_logs"]
+		require.True(t, exists)
+		require.Equal(t, "test", userLogs.Schema)
+		require.Equal(t, "project_id", userLogs.TenantIdColumn)
+		require.Equal(t, uint(5), userLogs.PartitionCount)
+		require.Equal(t, time.Hour*24*7, userLogs.RetentionPeriod)
+
+		deliveryAttempts, exists := tableMap["delivery_attempts"]
+		require.True(t, exists)
+		require.Equal(t, "test", deliveryAttempts.Schema)
+		require.Equal(t, "", deliveryAttempts.TenantIdColumn) // No tenant column
+		require.Equal(t, uint(3), deliveryAttempts.PartitionCount)
+		require.Equal(t, time.Hour*24*3, deliveryAttempts.RetentionPeriod)
+	})
+
+	t.Run("GetTenants", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		// Create parent table
+		parentTable := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			PartitionCount:    2,
+			RetentionPeriod:   time.Hour * 24 * 7,
+		}
+
+		_, err = m.CreateParentTable(ctx, parentTable)
+		require.NoError(t, err)
+
+		// Register multiple tenants
+		tenants := []Tenant{
+			{
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant1",
+			},
+			{
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant2",
+			},
+			{
+				TableName:   "user_logs",
+				TableSchema: "test",
+				TenantId:    "tenant3",
+			},
+		}
+
+		for _, tenant := range tenants {
+			_, err = m.RegisterTenant(ctx, tenant)
+			require.NoError(t, err)
+		}
+
+		// Get tenants for the parent table
+		retrievedTenants, err := m.GetTenants(ctx, "user_logs", "test")
+		require.NoError(t, err)
+		require.Len(t, retrievedTenants, 3)
+
+		// Verify all tenants were retrieved
+		tenantIds := make(map[string]bool)
+		for _, tenant := range retrievedTenants {
+			tenantIds[tenant.TenantId] = true
+			require.Equal(t, "user_logs", tenant.TableName)
+			require.Equal(t, "test", tenant.TableSchema)
+		}
+
+		require.True(t, tenantIds["tenant1"])
+		require.True(t, tenantIds["tenant2"])
+		require.True(t, tenantIds["tenant3"])
+	})
+
+	t.Run("GetTenantsForNonExistentTable", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		tenants, err := m.GetTenants(context.Background(), "nonexistent_table", "test")
+		require.NoError(t, err)
+		require.Empty(t, tenants)
+	})
+
+	t.Run("RegisterTenantWithExistingPartitions", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		// Create some existing partitions manually
+		existingPartitions := []string{
+			`CREATE TABLE test.user_logs_tenant1_20240101 PARTITION OF test.user_logs
+				 FOR VALUES FROM ('tenant1', '2024-01-01') TO ('tenant1', '2024-01-02')`,
+			`CREATE TABLE test.user_logs_tenant1_20240102 PARTITION OF test.user_logs
+				 FOR VALUES FROM ('tenant1', '2024-01-02') TO ('tenant1', '2024-01-03')`,
+		}
+
+		for _, partition := range existingPartitions {
+			_, err := db.ExecContext(context.Background(), partition)
+			require.NoError(t, err)
+		}
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		// Create parent table
+		parentTable := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			PartitionCount:    5,
+			RetentionPeriod:   time.Hour * 24 * 7,
+		}
+
+		_, err = m.CreateParentTable(context.Background(), parentTable)
+		require.NoError(t, err)
+
+		// Register tenant
+		tenant := Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
+		}
+
+		result, err := m.RegisterTenant(context.Background(), tenant)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, "tenant1", result.TenantId)
+		require.Equal(t, 5, result.PartitionsCreated)
+		require.Empty(t, result.Errors)
+
+		// Verify total partitions (existing + new)
+		var partitionCount int
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant1%")
+		require.NoError(t, err)
+		require.Equal(t, 7, partitionCount) // 2 existing + 5 new
+	})
+
+	t.Run("ParentTableWithConfigInitialization", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		createParentTable(t, context.Background(), db)
+		defer dropParentTables(t, context.Background(), db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "user_logs",
+					Schema:            "test",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: time.Hour * 24,
+					PartitionCount:    3,
+					RetentionPeriod:   time.Hour * 24 * 7,
+				},
+			},
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+		require.NotNil(t, m)
+
+		// Verify parent table was created
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM partman.parent_tables WHERE table_name = $1", "user_logs")
+		require.NoError(t, err)
+		require.Equal(t, 1, count)
+	})
+
+	t.Run("TenantRegistrationWithDataInsertion", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		createParentTable(t, context.Background(), db)
+		defer dropParentTables(t, context.Background(), db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		// Create parent table
+		parentTable := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			PartitionCount:    3,
+			RetentionPeriod:   time.Hour * 24 * 7,
+		}
+
+		_, err = m.CreateParentTable(context.Background(), parentTable)
+		require.NoError(t, err)
+
+		// Register tenant
+		tenant := Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
+		}
+
+		result, err := m.RegisterTenant(context.Background(), tenant)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Empty(t, result.Errors)
+
+		// Insert data for the tenant
+		insertSQL := `INSERT INTO test.user_logs (id, project_id, created_at, data) VALUES ($1, $2, $3, $4)`
+		for i := 0; i < 10; i++ {
+			_, err = db.ExecContext(context.Background(), insertSQL,
+				ulid.Make().String(),
+				"tenant1",
+				clock.Now().Add(time.Duration(i)*time.Hour),
+				fmt.Sprintf(`{"message": "test %d"}`, i),
+			)
+			require.NoError(t, err)
+		}
+
+		// Verify data was inserted correctly
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM test.user_logs WHERE project_id = $1", "tenant1")
+		require.NoError(t, err)
+		require.Equal(t, 10, count)
+
+		// Verify data is distributed across partitions
+		var partitionCount int
+		err = db.Get(&partitionCount, "SELECT COUNT(DISTINCT schemaname || '.' || tablename) FROM pg_tables WHERE tablename LIKE 'user_logs_tenant1%'")
+		require.NoError(t, err)
+		require.Equal(t, 3, partitionCount)
+	})
+
+	t.Run("TenantRegistrationResultValidation", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		createParentTable(t, context.Background(), db)
+		defer dropParentTables(t, context.Background(), db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		// Create parent table
+		parentTable := Table{
+			Name:              "user_logs",
+			Schema:            "test",
+			TenantIdColumn:    "project_id",
+			PartitionBy:       "created_at",
+			PartitionType:     TypeRange,
+			PartitionInterval: time.Hour * 24,
+			PartitionCount:    2,
+			RetentionPeriod:   time.Hour * 24 * 7,
+		}
+
+		_, err = m.CreateParentTable(context.Background(), parentTable)
+		require.NoError(t, err)
+
+		// Register tenant
+		tenant := Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant1",
+		}
+
+		result, err := m.RegisterTenant(context.Background(), tenant)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// Validate result structure
+		require.Equal(t, "tenant1", result.TenantId)
+		require.Equal(t, "user_logs", result.TableName)
+		require.Equal(t, "test", result.TableSchema)
+		require.Equal(t, 2, result.PartitionsCreated)
+		require.Empty(t, result.Errors)
+
+		// Test with invalid tenant (should return error in a result)
+		invalidTenant := Tenant{
+			TableName:   "nonexistent_table",
+			TableSchema: "test",
+			TenantId:    "tenant2",
+		}
+
+		invalidResult, err := m.RegisterTenant(context.Background(), invalidTenant)
+		require.NoError(t, err)
+		require.NotNil(t, invalidResult)
+		require.Equal(t, "tenant2", invalidResult.TenantId)
+		require.NotEmpty(t, invalidResult.Errors)
+		require.Contains(t, invalidResult.Errors[0].Error(), "parent table not found")
+	})
+}
+
 //
 // func TestManagerConfigUpdate(t *testing.T) {
 // 	t.Run("AddManagedTable", func(t *testing.T) {
@@ -2343,12 +2271,12 @@ func TestManager(t *testing.T) {
 // 			TenantId:    "tenant2",
 // 		}
 //
-// 		_, err = manager.RegisterTenant(ctx, newTable)
+// 		_, err = m.RegisterTenant(ctx, newTable)
 // 		require.NoError(t, err)
 //
 // 		// Verify config was updated
-// 		require.Equal(t, 2, len(manager.config.Tables))
-// 		require.Contains(t, manager.config.Tables, newTable)
+// 		require.Equal(t, 2, len(m.config.Tables))
+// 		require.Contains(t, m.config.Tables, newTable)
 // 	})
 //
 // 	t.Run("importExistingPartitions", func(t *testing.T) {
@@ -2384,7 +2312,7 @@ func TestManager(t *testing.T) {
 // 		}
 //
 // 		// Import existing partitions
-// 		err = manager.importExistingPartitions(ctx, Table{
+// 		err = m.importExistingPartitions(ctx, Table{
 // 			Schema:            "test",
 // 			PartitionBy:       "created_at",
 // 			PartitionType:     TypeRange,
@@ -2396,10 +2324,10 @@ func TestManager(t *testing.T) {
 // 		require.NoError(t, err)
 //
 // 		// Verify config includes imported tables
-// 		require.Equal(t, 1, len(manager.config.Tables))
+// 		require.Equal(t, 1, len(m.config.Tables))
 //
 // 		// Verify the imported table has correct configuration
-// 		importedTable := manager.config.Tables[0]
+// 		importedTable := m.config.Tables[0]
 // 		require.Equal(t, "user_logs", importedTable.Name)
 // 		require.Equal(t, TypeRange, importedTable.PartitionType)
 // 		require.Equal(t, "created_at", importedTable.PartitionBy)
@@ -2496,7 +2424,7 @@ func TestManager(t *testing.T) {
 // 		require.NoError(t, err)
 //
 // 		// Verify that manager config contains both existing and new tables
-// 		require.Equal(t, 3, len(manager.config.Tables), "Should have 3 tables (2 existing + 1 new)")
+// 		require.Equal(t, 3, len(m.config.Tables), "Should have 3 tables (2 existing + 1 new)")
 //
 // 		// Helper function to find table by tenant ID
 // 		findTable := func(tables []Table, tenantID string) *Table {
@@ -2509,18 +2437,18 @@ func TestManager(t *testing.T) {
 // 		}
 //
 // 		// Verify existing tables were loaded with correct configuration
-// 		tenant1Table := findTable(manager.config.Tables, "TENANT1")
+// 		tenant1Table := findTable(m.config.Tables, "TENANT1")
 // 		require.NotNil(t, tenant1Table)
 // 		require.Equal(t, uint(5), tenant1Table.PartitionCount)
 // 		require.Equal(t, time.Hour*24*31, tenant1Table.RetentionPeriod)
 //
-// 		tenant2Table := findTable(manager.config.Tables, "tenant2")
+// 		tenant2Table := findTable(m.config.Tables, "tenant2")
 // 		require.NotNil(t, tenant2Table)
 // 		require.Equal(t, uint(3), tenant2Table.PartitionCount)
 // 		require.Equal(t, time.Hour*24, tenant2Table.RetentionPeriod)
 //
 // 		// Verify new table was added
-// 		tenant3Table := findTable(manager.config.Tables, "tenant3")
+// 		tenant3Table := findTable(m.config.Tables, "tenant3")
 // 		require.NotNil(t, tenant3Table)
 // 		require.Equal(t, uint(2), tenant3Table.PartitionCount)
 // 		require.Equal(t, time.Hour*24*7, tenant3Table.RetentionPeriod)
@@ -2586,8 +2514,8 @@ func TestManager(t *testing.T) {
 // 		require.NoError(t, err)
 //
 // 		// Verify that new config overrode existing config
-// 		require.Equal(t, 1, len(manager.config.Tables))
-// 		table := manager.config.Tables[0]
+// 		require.Equal(t, 1, len(m.config.Tables))
+// 		table := m.config.Tables[0]
 // 		require.Equal(t, "TENANT1", table.TenantId)
 // 		require.Equal(t, uint(10), table.PartitionCount)
 // 		require.Equal(t, time.Hour*24*31, table.RetentionPeriod)
@@ -2639,21 +2567,21 @@ func TestManager(t *testing.T) {
 // 		// Add the same table again with different config
 // 		updatedTable := initialTable
 // 		updatedTable.PartitionCount = 5
-// 		err = manager.AddManagedTable(updatedTable)
+// 		err = m.AddManagedTable(updatedTable)
 // 		require.NoError(t, err)
 //
 // 		// Verify only one table exists with updated config
-// 		require.Equal(t, 1, len(manager.config.Tables))
-// 		require.Equal(t, uint(5), manager.config.Tables[0].PartitionCount)
+// 		require.Equal(t, 1, len(m.config.Tables))
+// 		require.Equal(t, uint(5), m.config.Tables[0].PartitionCount)
 //
 // 		// Add another table with same name but different tenant
 // 		newTenantTable := initialTable
 // 		newTenantTable.TenantId = "tenant2"
-// 		err = manager.AddManagedTable(newTenantTable)
+// 		err = m.AddManagedTable(newTenantTable)
 // 		require.NoError(t, err)
 //
 // 		// Verify we now have exactly two tables
-// 		require.Equal(t, 2, len(manager.config.Tables))
+// 		require.Equal(t, 2, len(m.config.Tables))
 // 	})
 //
 // 	t.Run("initialize deduplicates tables from DB and config", func(t *testing.T) {
@@ -2710,8 +2638,8 @@ func TestManager(t *testing.T) {
 // 		require.NoError(t, err)
 //
 // 		// Verify only one table exists with config taking precedence
-// 		require.Equal(t, 1, len(manager.config.Tables))
-// 		require.Equal(t, uint(10), manager.config.Tables[0].PartitionCount)
+// 		require.Equal(t, 1, len(m.config.Tables))
+// 		require.Equal(t, uint(10), m.config.Tables[0].PartitionCount)
 //
 // 		dropParentTables(t, ctx, db)
 // 		cleanupPartManDBs(t, db)
@@ -2753,7 +2681,7 @@ func TestManager(t *testing.T) {
 // 		}
 //
 // 		// Import existing partitions
-// 		err = manager.importExistingPartitions(ctx, Table{
+// 		err = m.importExistingPartitions(ctx, Table{
 // 			Schema:            "test",
 // 			PartitionBy:       "created_at",
 // 			PartitionType:     TypeRange,
@@ -2764,8 +2692,8 @@ func TestManager(t *testing.T) {
 // 		require.NoError(t, err)
 //
 // 		// Verify we still only have one table (deduplication worked)
-// 		require.Equal(t, 1, len(manager.config.Tables))
+// 		require.Equal(t, 1, len(m.config.Tables))
 // 		// Verify that the original config was preserved
-// 		require.Equal(t, uint(5), manager.config.Tables[0].PartitionCount)
+// 		require.Equal(t, uint(5), m.config.Tables[0].PartitionCount)
 // 	})
 // }

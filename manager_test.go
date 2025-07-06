@@ -77,7 +77,7 @@ func setupTestDB(t *testing.T, ctx context.Context) *sqlx.DB {
 	return db
 }
 
-// cleanupPartManDBs extends the existing cleanupPartManDBs to also clean up parent tables
+// cleanupPartManDBs clean up parent tables
 func cleanupPartManDBs(t *testing.T, db *sqlx.DB) {
 	t.Helper()
 
@@ -108,10 +108,7 @@ func TestManager(t *testing.T) {
 	t.Run("CreateNewManager", func(t *testing.T) {
 		ctx := context.Background()
 		db := setupTestDB(t, ctx)
-		defer cleanupPartManDBs(t, db)
-
 		createParentTable(t, ctx, db)
-		defer dropParentTables(t, ctx, db)
 
 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 		config := &Config{
@@ -134,13 +131,15 @@ func TestManager(t *testing.T) {
 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 		require.NotNil(t, m)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
 	})
 
 	t.Run("Initialize", func(t *testing.T) {
 		ctx := context.Background()
-
 		db := setupTestDB(t, ctx)
-		defer cleanupPartManDBs(t, db)
+		createParentTable(t, ctx, db)
 
 		createParentTable(t, context.Background(), db)
 		defer dropParentTables(t, context.Background(), db)
@@ -170,11 +169,132 @@ func TestManager(t *testing.T) {
 		err = db.Get(&count, "SELECT COUNT(*) FROM partman.parent_tables WHERE table_name = $1", "user_logs")
 		require.NoError(t, err)
 		require.Equal(t, 1, count)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
+
+	t.Run("Error - DB must not be nil", func(t *testing.T) {
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "user_logs",
+					Schema:            "test",
+					PartitionType:     TypeRange,
+					PartitionBy:       "created_at",
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		manager, err := NewManager(
+			WithLogger(logger),
+			WithConfig(config),
+			WithClock(clock),
+		)
+		require.Error(t, err)
+		require.Nil(t, manager)
+		require.Equal(t, ErrDbDriverMustNotBeNil, err)
+	})
+
+	t.Run("Error - Logger must not be nil", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "user_logs",
+					Schema:            "test",
+					PartitionType:     TypeRange,
+					PartitionBy:       "created_at",
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		clock := NewSimulatedClock(time.Now())
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithConfig(config),
+			WithClock(clock),
+		)
+		require.Error(t, err)
+		require.Nil(t, manager)
+		require.Equal(t, ErrLoggerMustNotBeNil, err)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
+
+	t.Run("Error - Config must not be nil", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		clock := NewSimulatedClock(time.Now())
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(logger),
+			WithClock(clock),
+		)
+		require.Error(t, err)
+		require.Nil(t, manager)
+		require.Equal(t, ErrConfigMustNotBeNil, err)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
+
+	t.Run("Error - Clock must not be nil", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "user_logs",
+					Schema:            "test",
+					PartitionType:     TypeRange,
+					PartitionBy:       "created_at",
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24 * 7,
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		manager, err := NewManager(
+			WithDB(db),
+			WithLogger(logger),
+			WithConfig(config),
+		)
+		require.Error(t, err)
+		require.Nil(t, manager)
+		require.Equal(t, ErrClockMustNotBeNil, err)
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
 	})
 
 	t.Run("CreateFuturePartitions", func(t *testing.T) {
 		ctx := context.Background()
-
 		db := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
@@ -227,7 +347,6 @@ func TestManager(t *testing.T) {
 
 	t.Run("CreateFuturePartitionsWithExistingPartitionsInRange", func(t *testing.T) {
 		ctx := context.Background()
-
 		db := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
@@ -273,7 +392,6 @@ func TestManager(t *testing.T) {
 
 	t.Run("CreateFuturePartitionsWithExistingPartitionsOutOfRange", func(t *testing.T) {
 		ctx := context.Background()
-
 		db := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
@@ -320,7 +438,6 @@ func TestManager(t *testing.T) {
 
 	t.Run("DropOldPartitions", func(t *testing.T) {
 		ctx := context.Background()
-
 		db := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
@@ -383,7 +500,6 @@ func TestManager(t *testing.T) {
 
 	t.Run("TestMaintainer", func(t *testing.T) {
 		ctx := context.Background()
-
 		db := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
@@ -539,7 +655,6 @@ func TestManager(t *testing.T) {
 
 	t.Run("PartitionExists", func(t *testing.T) {
 		ctx := context.Background()
-
 		db := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
@@ -588,9 +703,99 @@ func TestManager(t *testing.T) {
 		cleanupPartManDBs(t, db)
 	})
 
+	t.Run("RegisterTenant", func(t *testing.T) {
+		ctx := context.Background()
+		db := setupTestDB(t, ctx)
+		createParentTable(t, ctx, db)
+
+		config := &Config{
+			SampleRate: time.Second,
+			Tables: []Table{
+				{
+					Name:              "user_logs",
+					Schema:            "test",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     TypeRange,
+					PartitionInterval: time.Hour * 24,
+					RetentionPeriod:   time.Hour * 24,
+					PartitionCount:    2,
+				},
+			},
+		}
+
+		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		clock := NewSimulatedClock(now)
+
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+		require.NoError(t, err)
+
+		// Add a new managed table
+		tableConfig := Tenant{
+			TableName:   "user_logs",
+			TableSchema: "test",
+			TenantId:    "tenant3",
+		}
+		result, err := m.RegisterTenant(ctx, tableConfig)
+		require.NoError(t, err)
+
+		if len(result.Errors) > 0 {
+			require.Fail(t, "expected no errors, but got some anyway", result.Errors)
+		}
+
+		// Verify that the new tenant's partitions exist
+		var partitionCount int
+		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant3%")
+		require.NoError(t, err)
+		require.Equal(t, 2, partitionCount)
+
+		// Insert rows for the new tenant
+		insertSQL := `INSERT INTO test.user_logs (id, project_id, created_at) VALUES ($1, $2, $3)`
+		for i := 0; i < 5; i++ {
+			_, err = db.ExecContext(context.Background(), insertSQL,
+				ulid.Make().String(), "tenant3",
+				now.Add(time.Duration(i)*time.Minute),
+			)
+			require.NoError(t, err)
+		}
+
+		var count int
+		err = db.QueryRowxContext(ctx, "select count(*) from test.user_logs where project_id = $1;", tableConfig.TenantId).Scan(&count)
+		require.NoError(t, err)
+		require.Equal(t, count, 5)
+
+		clock.AdvanceTime(time.Hour * 25)
+
+		// Run retention for the tenant
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
+
+		t.Log(clock.Now())
+
+		// Verify that the partitions still equal 2
+		err = db.Get(&partitionCount, "SELECT count(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant3%")
+		require.NoError(t, err)
+		require.Equal(t, 2, partitionCount)
+
+		var exists bool
+		err = db.QueryRowxContext(ctx, "select exists(select 1 from test.user_logs where project_id = $1);", tableConfig.TenantId).Scan(&exists)
+		require.NoError(t, err)
+		require.False(t, exists)
+
+		// Verify that a new partition was created
+		var partitionTableNames []string
+		err = db.Select(&partitionTableNames, "SELECT tablename FROM pg_tables WHERE tablename LIKE $1 order by tablename", "user_logs_tenant3%")
+		require.NoError(t, err)
+		require.Equal(t, "user_logs_tenant3_20240102", partitionTableNames[0])
+		require.Equal(t, "user_logs_tenant3_20240103", partitionTableNames[1])
+
+		dropParentTables(t, ctx, db)
+		cleanupPartManDBs(t, db)
+	})
+
 	t.Run("CreateFuturePartitionsWithTenantId", func(t *testing.T) {
 		ctx := context.Background()
-
 		db := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
@@ -658,7 +863,6 @@ func TestManager(t *testing.T) {
 
 	t.Run("CreateFuturePartitionsForMultipleTenants", func(t *testing.T) {
 		ctx := context.Background()
-
 		db := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
@@ -766,9 +970,7 @@ func TestManager(t *testing.T) {
 	})
 
 	t.Run("TestMaintainerWithTwoTenants", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
+		ctx := context.Background()
 		db := setupTestDB(t, ctx)
 		createParentTable(t, ctx, db)
 
@@ -877,7 +1079,6 @@ func TestManager(t *testing.T) {
 	t.Run("importExistingPartitions", func(t *testing.T) {
 		t.Run("Successfully import existing partitions", func(t *testing.T) {
 			ctx := context.Background()
-
 			db := setupTestDB(t, ctx)
 			createParentTable(t, ctx, db)
 
@@ -946,9 +1147,7 @@ func TestManager(t *testing.T) {
 		})
 
 		t.Run("Import with invalid partition format", func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
+			ctx := context.Background()
 			db := setupTestDB(t, ctx)
 			createParentTable(t, ctx, db)
 
@@ -994,9 +1193,7 @@ func TestManager(t *testing.T) {
 		})
 
 		t.Run("Import partitions with multiple date formats", func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
+			ctx := context.Background()
 			db := setupTestDB(t, ctx)
 			createParentTable(t, ctx, db)
 
@@ -1063,9 +1260,7 @@ func TestManager(t *testing.T) {
 		})
 
 		t.Run("Import partitions with existing management entries", func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
+			ctx := context.Background()
 			db := setupTestDB(t, ctx)
 			createParentTable(t, ctx, db)
 
@@ -1307,13 +1502,10 @@ func TestManager(t *testing.T) {
 		t.Run("importExistingPartitions with only non-tenant tables", func(t *testing.T) {
 			t.Skip("I'll add support for tables without tenant_id columns in the future")
 
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
+			ctx := context.Background()
 			db := setupTestDB(t, ctx)
 			createParentTable(t, ctx, db)
 
-			// Create test table without tenant support
 			_, err := db.ExecContext(ctx, `
 					CREATE TABLE test.user_logs (
 						id VARCHAR NOT NULL,
@@ -1385,252 +1577,12 @@ func TestManager(t *testing.T) {
 	})
 }
 
-// func TestNewManager(t *testing.T) {
-// 	t.Run("Success", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 			Tables: []Table{
-// 				{
-// 					Name:              "user_logs",
-// 					Schema:            "test",
-// 					PartitionType:     TypeRange,
-// 					PartitionBy:       "created_at",
-// 					PartitionInterval: time.Hour * 24,
-// 					RetentionPeriod:   time.Hour * 24 * 7,
-// 					PartitionCount:    2,
-// 				},
-// 			},
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
-// 		require.NoError(t, err)
-// 		require.NotNil(t, manager)
-// 	})
-//
-// 	t.Run("Error - DB must not be nil", func(t *testing.T) {
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 			Tables: []Table{
-// 				{
-// 					Name:              "user_logs",
-// 					Schema:            "test",
-// 					PartitionType:     TypeRange,
-// 					PartitionBy:       "created_at",
-// 					PartitionInterval: time.Hour * 24,
-// 					RetentionPeriod:   time.Hour * 24 * 7,
-// 					PartitionCount:    2,
-// 				},
-// 			},
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		manager, err := NewManager(
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
-// 		require.Error(t, err)
-// 		require.Nil(t, manager)
-// 		require.Equal(t, ErrDbDriverMustNotBeNil, err)
-// 	})
-//
-// 	t.Run("Error - Logger must not be nil", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 			Tables: []Table{
-// 				{
-// 					Name:              "user_logs",
-// 					Schema:            "test",
-// 					PartitionType:     TypeRange,
-// 					PartitionBy:       "created_at",
-// 					PartitionInterval: time.Hour * 24,
-// 					RetentionPeriod:   time.Hour * 24 * 7,
-// 					PartitionCount:    2,
-// 				},
-// 			},
-// 		}
-//
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
-// 		require.Error(t, err)
-// 		require.Nil(t, manager)
-// 		require.Equal(t, ErrLoggerMustNotBeNil, err)
-// 	})
-//
-// 	t.Run("Error - Config must not be nil", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		clock := NewSimulatedClock(time.Now())
-//
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithClock(clock),
-// 		)
-// 		require.Error(t, err)
-// 		require.Nil(t, manager)
-// 		require.Equal(t, ErrConfigMustNotBeNil, err)
-// 	})
-//
-// 	t.Run("Error - Clock must not be nil", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 			Tables: []Table{
-// 				{
-// 					Name:              "user_logs",
-// 					Schema:            "test",
-// 					PartitionType:     TypeRange,
-// 					PartitionBy:       "created_at",
-// 					PartitionInterval: time.Hour * 24,
-// 					RetentionPeriod:   time.Hour * 24 * 7,
-// 					PartitionCount:    2,
-// 				},
-// 			},
-// 		}
-//
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 		)
-// 		require.Error(t, err)
-// 		require.Nil(t, manager)
-// 		require.Equal(t, ErrClockMustNotBeNil, err)
-// 	})
-//
-// 	t.Run("AddManagedTable", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
-// 		ctx, cancel := context.WithCancel(context.Background())
-// 		defer cancel()
-//
-// 		// Create the test table with tenant support
-// 		createParentTable(t, ctx, db)
-// 		defer dropParentTables(t, ctx, db)
-//
-// 		// Initial configuration with two tenants
-// 		config := &Config{
-// 			SampleRate: time.Second,
-// 			Tables: []Table{
-// 				{
-// 					Name:              "user_logs",
-// 					Schema:            "test",
-// 					TenantIdColumn:    "tenant_id",
-// 					PartitionBy:       "created_at",
-// 					PartitionType:     TypeRange,
-// 					PartitionInterval: time.Hour * 24,
-// 					RetentionPeriod:   1 * time.Minute,
-// 					PartitionCount:    2,
-// 				},
-// 				{
-// 					Name:              "user_logs",
-// 					Schema:            "test",
-// 					TenantIdColumn:    "tenant_id",
-// 					PartitionBy:       "created_at",
-// 					PartitionType:     TypeRange,
-// 					PartitionInterval: time.Hour * 24,
-// 					RetentionPeriod:   1 * time.Minute,
-// 					PartitionCount:    2,
-// 				},
-// 			},
-// 		}
-//
-// 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
-// 		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-// 		clock := NewSimulatedClock(now)
-//
-// 		// Create and initialize manager
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithClock(clock),
-// 			WithConfig(config),
-// 		)
-// 		require.NoError(t, err)
-//
-// 		// Add a new managed table
-// 		tableConfig := Tenant{
-// 			TableName:   "user_logs",
-// 			TableSchema: "test",
-// 			TenantId:    "tenant3",
-// 		}
-// 		_, err = manager.RegisterTenant(ctx, tableConfig)
-// 		require.NoError(t, err)
-//
-// 		// Verify that the new tenant's partitions exist
-// 		var partitionCount int
-// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant3%")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 2, partitionCount)
-//
-// 		// Insert rows for the new tenant
-// 		insertSQL := `INSERT INTO test.user_logs (id, tenant_id, created_at) VALUES ($1, $2, $3)`
-// 		for i := 0; i < 5; i++ {
-// 			_, err = db.ExecContext(context.Background(), insertSQL,
-// 				ulid.Make().String(), "tenant3",
-// 				now.Add(time.Duration(i)*time.Minute),
-// 			)
-// 			require.NoError(t, err)
-// 		}
-//
-// 		clock.AdvanceTime(time.Hour)
-//
-// 		var count int
-// 		err = db.QueryRowxContext(ctx, "select count(*) from test.user_logs where tenant_id = $1;", tableConfig.TenantId).Scan(&count)
-// 		require.NoError(t, err)
-// 		require.Equal(t, count, 5)
-//
-// 		// Run retention for the tenant
-// 		err = manager.DropOldPartitions(context.Background())
-// 		require.NoError(t, err)
-//
-// 		// Verify that the new tenant's partitions exist
-// 		err = db.Get(&partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1", "user_logs_tenant3%")
-// 		require.NoError(t, err)
-// 		require.Equal(t, 1, partitionCount)
-//
-// 		var exists bool
-// 		err = db.QueryRowxContext(ctx, "select exists(select 1 from test.user_logs where tenant_id = $1);", tableConfig.TenantId).Scan(&exists)
-// 		require.NoError(t, err)
-// 		require.False(t, exists)
-// 	})
-// }
 //
 // func TestParentTablesAPI(t *testing.T) {
 // 	t.Run("CreateParentTable", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		createParentTable(t, context.Background(), db)
 // 		defer dropParentTables(t, context.Background(), db)
@@ -1642,12 +1594,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		parentTable := Table{
@@ -1661,7 +1608,7 @@ func TestManager(t *testing.T) {
 // 			RetentionPeriod:   time.Hour * 24 * 7,
 // 		}
 //
-// 		_, err = manager.CreateParentTable(context.Background(), parentTable)
+// 		_, err = m.CreateParentTable(context.Background(), parentTable)
 // 		require.NoError(t, err)
 //
 // 		// Verify that the parent table was created in the database
@@ -1669,11 +1616,15 @@ func TestManager(t *testing.T) {
 // 		err = db.Get(&count, "SELECT COUNT(*) FROM partman.parent_tables WHERE table_name = $1", "user_logs")
 // 		require.NoError(t, err)
 // 		require.Equal(t, 1, count)
+//
+// 		dropParentTables(t, ctx, db)
+// 		cleanupPartManDBs(t, db)
 // 	})
 //
 // 	t.Run("CreateParentWithInvalidTable", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 // 		config := &Config{
@@ -1682,12 +1633,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		parentTable := Table{
@@ -1704,14 +1650,15 @@ func TestManager(t *testing.T) {
 // 		_, err = manager.CreateParentTable(context.Background(), parentTable)
 // 		require.Error(t, err)
 // 		require.Contains(t, err.Error(), "table validation failed")
+//
+// 		dropParentTables(t, ctx, db)
+// 		cleanupPartManDBs(t, db)
 // 	})
 //
 // 	t.Run("RegisterTenant", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
-// 		createParentTable(t, context.Background(), db)
-// 		defer dropParentTables(t, context.Background(), db)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 // 		config := &Config{
@@ -1720,12 +1667,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 // 		// First, create the parent table
 // 		parentTable := Table{
@@ -1771,8 +1713,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("RegisterTenantWithNonExistentParent", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 // 		config := &Config{
@@ -1781,12 +1724,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		tenant := Tenant{
@@ -1804,8 +1742,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("RegisterMultipleTenants", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		createParentTable(t, context.Background(), db)
 // 		defer dropParentTables(t, context.Background(), db)
@@ -1817,12 +1756,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		// Create the parent table
@@ -1887,8 +1821,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("GetParentTables", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		createParentTable(t, context.Background(), db)
 // 		defer dropParentTables(t, context.Background(), db)
@@ -1900,12 +1835,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		// Create multiple parent tables
@@ -1967,8 +1897,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("GetTenants", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		createParentTable(t, context.Background(), db)
 // 		defer dropParentTables(t, context.Background(), db)
@@ -1980,12 +1911,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		// Create parent table
@@ -2046,8 +1972,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("GetTenantsForNonExistentTable", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 // 		config := &Config{
@@ -2056,12 +1983,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		tenants, err := manager.GetTenants(context.Background(), "nonexistent_table", "test")
@@ -2070,8 +1992,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("RegisterTenantWithExistingPartitions", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		createParentTable(t, context.Background(), db)
 // 		defer dropParentTables(t, context.Background(), db)
@@ -2096,12 +2019,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		// Create parent table
@@ -2141,8 +2059,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("ParentTableWithConfigInitialization", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		createParentTable(t, context.Background(), db)
 // 		defer dropParentTables(t, context.Background(), db)
@@ -2178,8 +2097,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("MixedLegacyAndParentTablesAPI", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		createParentTable(t, context.Background(), db)
 // 		defer dropParentTables(t, context.Background(), db)
@@ -2225,7 +2145,7 @@ func TestManager(t *testing.T) {
 // 			TenantId:    "new_tenant",
 // 		}
 //
-// 		result, err := manager.RegisterTenant(context.Background(), tenant)
+// 		result, err := m.RegisterTenant(context.Background(), tenant)
 // 		require.NoError(t, err)
 // 		require.NotNil(t, result)
 // 		require.Equal(t, "new_tenant", result.TenantId)
@@ -2245,8 +2165,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("TenantRegistrationWithDataInsertion", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		createParentTable(t, context.Background(), db)
 // 		defer dropParentTables(t, context.Background(), db)
@@ -2258,12 +2179,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		// Create parent table
@@ -2319,8 +2235,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("TenantRegistrationResultValidation", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		createParentTable(t, context.Background(), db)
 // 		defer dropParentTables(t, context.Background(), db)
@@ -2332,12 +2249,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewManager(
-// 			WithDB(db),
-// 			WithLogger(logger),
-// 			WithConfig(config),
-// 			WithClock(clock),
-// 		)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 //
 // 		// Create parent table
@@ -2391,8 +2303,9 @@ func TestManager(t *testing.T) {
 //
 // func TestManagerConfigUpdate(t *testing.T) {
 // 	t.Run("AddManagedTable", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		ctx := context.Background()
 //
@@ -2439,8 +2352,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("importExistingPartitions", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		ctx := context.Background()
 //
@@ -2495,8 +2409,9 @@ func TestManager(t *testing.T) {
 //
 // func TestManagerInitialization(t *testing.T) {
 // 	t.Run("loads existing managed tables", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
+// 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		ctx := context.Background()
 //
@@ -2612,10 +2527,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("new config overrides existing table config", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
 // 		ctx := context.Background()
+// 		db := setupTestDB(t, ctx)
+// 		createParentTable(t, ctx, db)
 //
 // 		// Create test table with tenant support
 // 		createParentTable(t, ctx, db)
@@ -2650,9 +2564,8 @@ func TestManager(t *testing.T) {
 // 			SampleRate: time.Second,
 // 			Tables: []Table{
 // 				{
-// 					Name:   "user_logs",
-// 					Schema: "test",
-// 					// TenantId:          "TENANT1", // Same tenant as existing
+// 					Name:              "user_logs",
+// 					Schema:            "test",
 // 					TenantIdColumn:    "tenant_id",
 // 					PartitionBy:       "created_at",
 // 					PartitionType:     TypeRange,
@@ -2696,19 +2609,14 @@ func TestManager(t *testing.T) {
 //
 // func TestTableDeduplication(t *testing.T) {
 // 	t.Run("AddManagedTable deduplicates tables", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
 // 		ctx := context.Background()
-// 		// Create test table with tenant support
+// 		db := setupTestDB(t, ctx)
 // 		createParentTable(t, ctx, db)
-// 		defer dropParentTables(t, ctx, db)
 //
 // 		// Initial config with one table
 // 		initialTable := Table{
 // 			Name:              "user_logs",
 // 			Schema:            "test",
-// 			TenantId:          "TENANT1",
 // 			TenantIdColumn:    "tenant_id",
 // 			PartitionType:     TypeRange,
 // 			PartitionBy:       "created_at",
@@ -2749,15 +2657,9 @@ func TestManager(t *testing.T) {
 // 	})
 //
 // 	t.Run("initialize deduplicates tables from DB and config", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
 // 		ctx := context.Background()
-//
-// 		// Create the test table with tenant support
+// 		db := setupTestDB(t, ctx)
 // 		createParentTable(t, ctx, db)
-// 		require.NoError(t, err)
-// 		defer dropParentTables(t, ctx, db)
 //
 // 		// Create the management table
 // 		migrations := []string{
@@ -2770,10 +2672,9 @@ func TestManager(t *testing.T) {
 // 		}
 //
 // 		// Insert into the existing table in DB
-// 		existingTable := Table{
+// 		mTable := Table{
 // 			Name:              "user_logs",
 // 			Schema:            "test",
-// 			TenantId:          "TENANT1",
 // 			TenantIdColumn:    "tenant_id",
 // 			PartitionBy:       "created_at",
 // 			PartitionType:     "range",
@@ -2781,13 +2682,11 @@ func TestManager(t *testing.T) {
 // 			PartitionCount:    5,
 // 			RetentionPeriod:   time.Hour * 24 * 31,
 // 		}
-// 		mTable := existingTable.toManagedTable()
-// 		_, err = db.ExecContext(ctx, upsertSQL,
+// 		_, err := db.ExecContext(ctx, upsertParentTableSQL,
 // 			ulid.Make().String(),
-// 			mTable.TableName,
-// 			mTable.SchemaName,
-// 			mTable.TenantID,
-// 			mTable.TenantColumn,
+// 			mTable.Name,
+// 			mTable.Schema,
+// 			mTable.TenantIdColumn,
 // 			mTable.PartitionBy,
 // 			mTable.PartitionType,
 // 			mTable.PartitionCount,
@@ -2797,7 +2696,7 @@ func TestManager(t *testing.T) {
 // 		require.NoError(t, err)
 //
 // 		// Create new manager with same table in config but different settings
-// 		configTable := existingTable
+// 		configTable := mTable
 // 		configTable.PartitionCount = 10
 // 		manager, err := NewManager(
 // 			WithDB(db),
@@ -2813,16 +2712,15 @@ func TestManager(t *testing.T) {
 // 		// Verify only one table exists with config taking precedence
 // 		require.Equal(t, 1, len(manager.config.Tables))
 // 		require.Equal(t, uint(10), manager.config.Tables[0].PartitionCount)
+//
+// 		dropParentTables(t, ctx, db)
+// 		cleanupPartManDBs(t, db)
 // 	})
 //
 // 	t.Run("importExistingPartitions deduplicates tables", func(t *testing.T) {
-// 		db, pool := setupTestDB(t)
-// 		defer cleanupPartManDBs(t, db, pool)
-//
 // 		ctx := context.Background()
-// 		// Create test table with tenant support
+// 		db := setupTestDB(t, ctx)
 // 		createParentTable(t, ctx, db)
-// 		defer dropParentTables(t, ctx, db)
 //
 // 		// Create initial manager with one table
 // 		initialTable := Table{
@@ -2870,3 +2768,4 @@ func TestManager(t *testing.T) {
 // 		// Verify that the original config was preserved
 // 		require.Equal(t, uint(5), manager.config.Tables[0].PartitionCount)
 // 	})
+// }

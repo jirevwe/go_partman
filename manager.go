@@ -225,6 +225,9 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 	for _, table := range tables {
 		// Find partitions older than the retention period
 		cutoffTime := m.clock.Now().Add(time.Duration(-table.RetentionPeriod))
+		m.logger.Info("dropping old partitions",
+			"cutoff_time", cutoffTime,
+			"table", table.TableName)
 		pattern := fmt.Sprintf("%s_%%", table.TableName)
 		if len(table.TenantId) > 0 {
 			pattern = fmt.Sprintf("%s_%s_%%", table.TableName, table.TenantId)

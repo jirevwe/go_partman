@@ -71,40 +71,6 @@ func NewManager(options ...Option) (*Manager, error) {
 	return m, nil
 }
 
-func NewAndStart(db *sqlx.DB, config *Config, logger Logger, clock Clock) (*Manager, error) {
-	if err := config.Validate(); err != nil {
-		return nil, err
-	}
-
-	m := &Manager{
-		db:         db,
-		clock:      clock,
-		logger:     logger,
-		config:     config,
-		mu:         &sync.RWMutex{},
-		wg:         &sync.WaitGroup{},
-		stop:       make(chan struct{}),
-		partitions: make(map[tableName]Partition),
-	}
-
-	ctx := context.Background()
-
-	if err := m.runMigrations(ctx); err != nil {
-		return nil, err
-	}
-
-	if err := m.initialize(ctx, config); err != nil {
-		return nil, err
-	}
-
-	// Start the maintenance routine
-	if err := m.Start(ctx); err != nil {
-		return nil, fmt.Errorf("failed to start maintenance routine: %w", err)
-	}
-
-	return m, nil
-}
-
 func (m *Manager) GetConfig() Config {
 	return *m.config
 }
@@ -450,6 +416,12 @@ func extractDateFromString(input string) (string, error) {
 
 // Start begins the maintenance routine
 func (m *Manager) Start(ctx context.Context) error {
+	if m.config.SampleRate <= 0 {
+		if err := m.Maintain(ctx); err != nil {
+			m.logger.Error("an error occurred while running maintenance", "error", err)
+		}
+	}
+
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()

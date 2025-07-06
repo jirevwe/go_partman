@@ -254,10 +254,6 @@ type Config struct {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	if c.SampleRate == 0 {
-		c.SampleRate = time.Minute
-	}
-
 	// Validate legacy Tables API
 	for i, table := range c.Tables {
 		if err := table.Validate(); err != nil {

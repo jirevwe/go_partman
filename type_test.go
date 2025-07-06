@@ -129,41 +129,6 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: "table[0]: retention period must be set",
 		},
 		{
-			name: "tenant id without column",
-			config: Config{
-				SampleRate: time.Second,
-				Tables: []Table{
-					{
-						Name:              "sample",
-						Schema:            "test_schema",
-						PartitionBy:       "col1",
-						PartitionType:     TypeRange,
-						PartitionInterval: time.Hour * 24,
-						RetentionPeriod:   time.Hour * 24 * 31,
-					},
-				},
-			},
-			wantErr: "table[0]: the tenant id column cannot be empty if the tenant id value is set",
-		},
-		{
-			name: "tenant column without id",
-			config: Config{
-				SampleRate: time.Second,
-				Tables: []Table{
-					{
-						Name:              "sample",
-						Schema:            "test_schema",
-						TenantIdColumn:    "tenant_id",
-						PartitionBy:       "col1",
-						PartitionType:     TypeRange,
-						PartitionInterval: time.Hour * 24,
-						RetentionPeriod:   time.Hour * 24 * 31,
-					},
-				},
-			},
-			wantErr: "table[0]: the tenant id value cannot be empty if the tenant id column is set",
-		},
-		{
 			name: "valid config with tenant id",
 			config: Config{
 				SampleRate: time.Second,

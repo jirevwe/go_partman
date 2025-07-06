@@ -105,7 +105,7 @@ func cleanupPartManDBs(t *testing.T, db *sqlx.DB) {
 }
 
 func TestManager(t *testing.T) {
-	t.Run("NewAndStart", func(t *testing.T) {
+	t.Run("CreateNewManager", func(t *testing.T) {
 		ctx := context.Background()
 		db := setupTestDB(t, ctx)
 		defer cleanupPartManDBs(t, db)
@@ -131,9 +131,9 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Now())
 
-		manager, err := NewAndStart(db, config, logger, clock)
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
-		require.NotNil(t, manager)
+		require.NotNil(t, m)
 	})
 
 	t.Run("Initialize", func(t *testing.T) {
@@ -163,10 +163,7 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Now())
 
-		manager, err := NewAndStart(db, config, logger, clock)
-		require.NoError(t, err)
-
-		err = manager.Start(context.Background())
+		_, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 
 		var count int
@@ -201,7 +198,7 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Now())
 
-		m, err := NewAndStart(db, config, logger, clock)
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 
 		result, err := m.RegisterTenant(ctx, Tenant{
@@ -216,7 +213,8 @@ func TestManager(t *testing.T) {
 		}
 
 		// Wait for maintenance to complete
-		time.Sleep(time.Second * 2)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		var partitionCount uint
 		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
@@ -258,10 +256,11 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-		_, err = NewAndStart(db, config, logger, clock)
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 
-		time.Sleep(time.Second * 1)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		var partitionCount uint
 		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
@@ -303,11 +302,12 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-		_, err = NewAndStart(db, config, logger, clock)
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 
 		// Wait for maintenance to complete
-		time.Sleep(time.Second * 2)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		var partitionCount uint
 		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
@@ -341,14 +341,14 @@ func TestManager(t *testing.T) {
 
 		logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
 		config := &Config{
-			SampleRate: time.Second,
+			SampleRate: 0,
 			Tables: []Table{
 				tableConfig,
 			},
 		}
 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-		m, err := NewAndStart(db, config, logger, clock)
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 
 		result, err := m.RegisterTenant(ctx, Tenant{
@@ -369,7 +369,8 @@ func TestManager(t *testing.T) {
 		require.Equal(t, 3, oldPartitionCount)
 
 		// Wait for maintenance to complete
-		time.Sleep(time.Second * 2)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		var newPartitionCount int
 		err = db.GetContext(ctx, &newPartitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
@@ -406,7 +407,7 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-		m, err := NewAndStart(db, config, logger, clock)
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 
 		result, err := m.RegisterTenant(ctx, Tenant{
@@ -421,7 +422,8 @@ func TestManager(t *testing.T) {
 		}
 
 		// Wait for maintenance to complete
-		time.Sleep(time.Second * 2)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		// Verify partitions were created
 		var partitionCount int
@@ -434,10 +436,8 @@ func TestManager(t *testing.T) {
 		clock.AdvanceTime(time.Hour * 24)
 
 		// Wait for maintenance to complete
-		time.Sleep(time.Second * 2)
-
-		// Stop the manager
-		m.Stop()
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		// Verify that a new partition was created
 		err = db.GetContext(ctx, &partitionCount, "SELECT COUNT(*) FROM pg_tables WHERE tablename LIKE $1 and schemaname = $2", fmt.Sprintf("%s_%%", tableConfig.Name), tableConfig.Schema)
@@ -562,7 +562,7 @@ func TestManager(t *testing.T) {
 			},
 		}
 
-		m, err := NewAndStart(db, config, logger, clock)
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 
 		result, err := m.RegisterTenant(ctx, Tenant{
@@ -577,7 +577,8 @@ func TestManager(t *testing.T) {
 		}
 
 		// Wait for maintenance to complete
-		time.Sleep(time.Second * 2)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		exists, err := m.partitionExists(ctx, "user_logs_tenant3_20240315", "test")
 		require.NoError(t, err)
@@ -620,7 +621,7 @@ func TestManager(t *testing.T) {
 
 		clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-		m, err := NewAndStart(db, config, logger, clock)
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 
 		result, err := m.RegisterTenant(ctx, tenant)
@@ -631,7 +632,8 @@ func TestManager(t *testing.T) {
 		}
 
 		// Wait for maintenance to complete
-		time.Sleep(time.Second * 2)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		// Verify partitions were created
 		var partitionCount uint
@@ -714,7 +716,8 @@ func TestManager(t *testing.T) {
 		}
 
 		// Wait for maintenance to run
-		time.Sleep(time.Second * 2)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		partitionNames := []string{
 			"user_logs_%s_20240101",
@@ -805,7 +808,7 @@ func TestManager(t *testing.T) {
 		clock := NewSimulatedClock(now)
 
 		// Create and initialize the manager
-		m, err := NewAndStart(db, config, logger, clock)
+		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 		require.NoError(t, err)
 
 		results, err := m.RegisterTenants(ctx, tenant1, tenant2)
@@ -838,7 +841,8 @@ func TestManager(t *testing.T) {
 		}
 
 		// Wait for maintenance to complete
-		time.Sleep(2 * time.Second)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		// Verify initial data
 		for _, tenant := range []Tenant{tenant1, tenant2} {
@@ -852,7 +856,8 @@ func TestManager(t *testing.T) {
 		clock.AdvanceTime(time.Hour * 25)
 
 		// Wait for maintenance to complete again
-		time.Sleep(2 * time.Second)
+		err = m.Maintain(ctx)
+		require.NoError(t, err)
 
 		// Verify that old data has been cleaned up
 		for _, tenant := range []Tenant{tenant1, tenant2} {
@@ -909,7 +914,7 @@ func TestManager(t *testing.T) {
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-			_, err := NewAndStart(db, config, logger, clock)
+			_, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 			require.NoError(t, err)
 
 			// Verify partitions were imported correctly
@@ -974,7 +979,7 @@ func TestManager(t *testing.T) {
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-			_, err = NewAndStart(db, config, logger, clock)
+			_, err = NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 			require.Error(t, err)
 			require.ErrorContains(t, err, "parsing time \"\" as \"20060102\": cannot parse \"\" as \"2006\"")
 
@@ -1033,7 +1038,7 @@ func TestManager(t *testing.T) {
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-			_, err := NewAndStart(db, config, logger, clock)
+			_, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 			require.NoError(t, err)
 
 			// Verify all partitions were imported
@@ -1103,7 +1108,7 @@ func TestManager(t *testing.T) {
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-			_, err = NewAndStart(db, config, logger, clock)
+			_, err = NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 			require.NoError(t, err)
 
 			// Verify only one management entry exists (no duplicates)
@@ -1158,7 +1163,7 @@ func TestManager(t *testing.T) {
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-			_, err := NewAndStart(db, config, logger, clock)
+			_, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 			require.Error(t, err)
 			require.ErrorContains(t, err, "parsing time \"\" as \"20060102\": cannot parse \"\" as \"2006\"")
 
@@ -1257,11 +1262,11 @@ func TestManager(t *testing.T) {
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-			manager, err := NewAndStart(db, config, logger, clock)
+			m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 			require.NoError(t, err)
 
 			// Import existing partitions
-			err = manager.importExistingPartitions(ctx, Table{
+			err = m.importExistingPartitions(ctx, Table{
 				Schema:            "test",
 				TenantIdColumn:    "tenant_id",
 				PartitionBy:       "created_at",
@@ -1272,8 +1277,8 @@ func TestManager(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			time.Sleep(time.Second)
-			manager.Stop()
+			err = m.Maintain(ctx)
+			require.NoError(t, err)
 
 			// Verify both tenant and non-tenant partitions were imported
 			var managedTables []struct {
@@ -1341,11 +1346,11 @@ func TestManager(t *testing.T) {
 			}
 			clock := NewSimulatedClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-			manager, err := NewAndStart(db, config, logger, clock)
+			m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 			require.NoError(t, err)
 
 			// Import existing partitions
-			err = manager.importExistingPartitions(ctx, Table{
+			err = m.importExistingPartitions(ctx, Table{
 				Schema:            "test",
 				TenantIdColumn:    "tenant_id",
 				PartitionBy:       "created_at",
@@ -2161,7 +2166,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewAndStart(db, config, logger, clock)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 // 		require.NotNil(t, manager)
 //
@@ -2198,7 +2203,7 @@ func TestManager(t *testing.T) {
 //
 // 		clock := NewSimulatedClock(time.Now())
 //
-// 		manager, err := NewAndStart(db, config, logger, clock)
+// 		m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
 // 		require.NoError(t, err)
 // 		require.NotNil(t, manager)
 //

@@ -129,26 +129,25 @@ join partman.parent_tables pt on p.parent_table_id = pt.id;`
 var getPartitionDetailsQuery = `
 WITH partition_info AS (
     SELECT
-        schemaname,
-        tablename,
-        pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(tablename)) as size_bytes,
-        (SELECT reltuples::bigint FROM pg_class WHERE oid = (quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass) as estimated_rows,
-        pg_get_expr(c.relpartbound, c.oid) as partition_expression
+        t.tablename as name,
+        pg_total_relation_size(quote_ident($1) || '.' || quote_ident(t.tablename)) as size_bytes,
+        (SELECT reltuples::bigint FROM pg_class WHERE oid = (quote_ident($1) || '.' || quote_ident(t.tablename))::regclass) as rows,
+        p.created_at as created
     FROM pg_tables t
-    JOIN pg_class c ON c.relname = t.tablename
-    WHERE schemaname = $1 AND tablename LIKE $2
+    LEFT JOIN partman.parent_tables pt ON pt.schema_name = t.schemaname AND pt.table_name = $2
+    LEFT JOIN partman.partitions p ON p.parent_table_id = pt.id
+    WHERE t.schemaname = $1 AND t.tablename LIKE $2 || '_%'
+    ORDER BY t.tablename DESC
+    LIMIT $3 OFFSET $4
 )
 SELECT
-    tablename as name,
+    name,
     pg_size_pretty(size_bytes) as size,
-    estimated_rows as rows,
-    partition_expression as range,
-    to_char(now(), 'YYYY-MM-DD') as created,
-    size_bytes as size_bytes,
-    COUNT(*) OVER() as total_count
-FROM partition_info
-ORDER BY tablename
-LIMIT $3 OFFSET $4;`
+    rows,
+    COALESCE(to_char(created, 'YYYY-MM-DD HH24:MI:SS'), '') as created,
+    size_bytes,
+    (SELECT COUNT(*) FROM pg_tables WHERE schemaname = $1 AND tablename LIKE $2 || '_%') as total_count
+FROM partition_info;`
 
 var getParentTableInfoQuery = `
 WITH parent_table_info AS (
@@ -185,8 +184,7 @@ CROSS JOIN totals t;`
 
 var getManagedTablesListQuery = `
 SELECT DISTINCT table_name, schema_name 
-FROM partman.partitions p 
-join partman.parent_tables pt on p.parent_table_id = pt.id
+FROM partman.parent_tables
 ORDER BY table_name;`
 
 var upsertParentTableSQL = `

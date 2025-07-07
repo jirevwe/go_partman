@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Database, Table2, BarChart3, HardDrive, Calendar } from 'lucide-react';
 import { apiService } from './api';
-import { Partition, ParentTableInfo, PaginationParams, TableInfo } from "./types";
+import { Partition, ParentTableInfo, TableInfo } from "./types";
 
 export default function App() {
   const [selectedTable, setSelectedTable] = useState<TableInfo | null>(null);
@@ -49,20 +49,23 @@ export default function App() {
   const fetchPartitions = async (table: TableInfo, page: number) => {
     try {
       setLoading(true);
-      const pagination: PaginationParams = {
+      const offset = (page - 1) * itemsPerPage;
+      const { data, error } = await apiService.getPartitions(table.schema, table.name, {
         limit: itemsPerPage,
-        offset: (page - 1) * itemsPerPage
-      };
-      const { data, error } = await apiService.getPartitions(table.name, table.schema, pagination);
+        offset,
+      });
+
       if (error) {
         throw new Error(error);
       }
+
       if (data) {
         setPartitions(data.partitions);
         setParentTableInfo(data.parent_table || null);
         if (data.partitions.length > 0) {
           setTotalPages(Math.ceil(data.partitions[0].total_count / itemsPerPage));
         }
+        setCurrentPage(page);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch partitions');
@@ -78,7 +81,6 @@ export default function App() {
 
   const handlePageChange = (page: number) => {
     if (selectedTable) {
-      setCurrentPage(page);
       fetchPartitions(selectedTable, page);
     }
   };
@@ -103,7 +105,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-red-50 flex items-center justify-center">
         <div className="text-red-600 text-center">
-          <h2 className="text-lg font-semibold">Error</h2>
+          <h2 className="text-2xl font-semibold mb-2">Error</h2>
           <p>{error}</p>
         </div>
       </div>
@@ -208,9 +210,6 @@ export default function App() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Size
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Partition Range
-                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -248,54 +247,117 @@ export default function App() {
                             </div>
                           </div>
                         </td>
-
-                        {/* partition range */}
-                        <td className="px-6 py-4 text-sm text-gray-500">
-                          <div className="break-words">
-                            {partition.range}
-                          </div>
-                        </td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
               {/* Pagination Controls */}
-              {!loading && partitions.length > 0 && (
-                <div className="px-6 py-4 flex items-center justify-between border-t border-gray-200">
-                  <div className="flex-1 flex justify-between items-center">
-                    <div>
-                      <p className="text-sm text-gray-700">
-                        Showing page <span className="font-medium">{currentPage}</span> of{' '}
-                        <span className="font-medium">{totalPages}</span>
-                      </p>
-                    </div>
-                    <div className="flex space-x-2">
+              {totalPages > 1 && (
+                  <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
+                    <div className="flex-1 flex justify-between sm:hidden">
                       <button
-                        onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={currentPage === 1}
-                        className={`relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
-                          currentPage === 1
-                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                            : 'bg-white text-gray-700 hover:bg-gray-50'
-                        }`}
+                          onClick={() => handlePageChange(currentPage - 1)}
+                          disabled={currentPage === 1}
+                          className={`relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
+                              currentPage === 1
+                                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                  : 'bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
                       >
                         Previous
                       </button>
                       <button
-                        onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={currentPage === totalPages}
-                        className={`relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
-                          currentPage === totalPages
-                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                            : 'bg-white text-gray-700 hover:bg-gray-50'
-                        }`}
+                          onClick={() => handlePageChange(currentPage + 1)}
+                          disabled={currentPage === totalPages}
+                          className={`ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
+                              currentPage === totalPages
+                                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                  : 'bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
                       >
                         Next
                       </button>
                     </div>
+                    <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm text-gray-700">
+                          Showing <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span>{' '}
+                          to{' '}
+                          <span className="font-medium">
+                            {Math.min(currentPage * itemsPerPage, partitions[0]?.total_count || 0)}
+                          </span>{' '}
+                          of <span className="font-medium">{partitions[0]?.total_count || 0}</span>{' '}
+                          results
+                        </p>
+                      </div>
+                      <div>
+                        <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                          <button
+                              onClick={() => handlePageChange(currentPage - 1)}
+                              disabled={currentPage === 1}
+                              className={`relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium ${
+                                  currentPage === 1
+                                      ? 'text-gray-300 cursor-not-allowed'
+                                      : 'text-gray-500 hover:bg-gray-50'
+                              }`}
+                          >
+                            <span className="sr-only">Previous</span>
+                            <svg
+                                className="h-5 w-5"
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                aria-hidden="true"
+                            >
+                              <path
+                                  fillRule="evenodd"
+                                  d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z"
+                                  clipRule="evenodd"
+                              />
+                            </svg>
+                          </button>
+                          {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                              <button
+                                  key={page}
+                                  onClick={() => handlePageChange(page)}
+                                  className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                                      currentPage === page
+                                          ? 'z-10 bg-indigo-50 border-indigo-500 text-indigo-600'
+                                          : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                                  }`}
+                              >
+                                {page}
+                              </button>
+                          ))}
+                          <button
+                              onClick={() => handlePageChange(currentPage + 1)}
+                              disabled={currentPage === totalPages}
+                              className={`relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium ${
+                                  currentPage === totalPages
+                                      ? 'text-gray-300 cursor-not-allowed'
+                                      : 'text-gray-500 hover:bg-gray-50'
+                              }`}
+                          >
+                            <span className="sr-only">Next</span>
+                            <svg
+                                className="h-5 w-5"
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                aria-hidden="true"
+                            >
+                              <path
+                                  fillRule="evenodd"
+                                  d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+                                  clipRule="evenodd"
+                              />
+                            </svg>
+                          </button>
+                        </nav>
+                      </div>
+                    </div>
                   </div>
-                </div>
               )}
             </div>
           </div>

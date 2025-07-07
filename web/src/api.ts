@@ -1,72 +1,70 @@
 import {
-  TablesResponse,
-  PartitionsResponse,
-  PaginationParams, TableInfo,
-} from "./types.ts";
+  TableInfo,
+  Partition,
+  ParentTableInfo,
+  PaginationParams,
+} from "./types";
 
-// Default to localhost in development can be overridden by environment variable
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+interface TablesResponse {
+  tables: TableInfo[];
+}
 
-interface ApiResponse<T> {
-  data?: T;
-  error?: string;
+interface PartitionsResponse {
+  partitions: Partition[];
+  parent_table?: ParentTableInfo;
 }
 
 class ApiService {
-  private readonly baseUrl: string;
+  private baseUrl: string;
 
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
+  constructor() {
+    this.baseUrl = "/api";
   }
 
-  private async fetchWithError<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<ApiResponse<T>> {
+  async getTables(): Promise<{ data?: TableInfo[]; error?: string }> {
     try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        ...options,
-        headers: {
-          "Content-Type": "application/json",
-          ...options.headers,
-        },
-      });
-
+      const response = await fetch(`${this.baseUrl}/tables`);
       if (!response.ok) {
-        const error = await response.json().catch(() => ({
-          message: "An unknown error occurred",
-        }));
-        return { error: error.message };
-      }
-
-      const data = await response.json();
-      return { data };
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }1
+      const data: TablesResponse = await response.json();
+      return { data: data.tables };
     } catch (error) {
       return {
         error:
-          error instanceof Error ? error.message : "An unknown error occurred",
+          error instanceof Error ? error.message : "Failed to fetch tables",
       };
     }
   }
 
-  async getTables(): Promise<ApiResponse<TableInfo[]>> {
-    const response = await this.fetchWithError<TablesResponse>("/api/tables");
-    if (response.data) {
-      return { data: response.data.tables };
-    }
-    return { error: response.error };
-  }
-
   async getPartitions(
-    tableName: string,
     schema: string,
-    pagination?: PaginationParams
-  ): Promise<ApiResponse<PartitionsResponse>> {
-    let endpoint = `/api/partitions?table=${tableName}&schema=${schema}`;
-    if (pagination) {
-      endpoint += `&limit=${pagination.limit}&offset=${pagination.offset}`;
+    table: string,
+    { limit, offset }: PaginationParams
+  ): Promise<{
+    data?: { partitions: Partition[]; parent_table?: ParentTableInfo };
+    error?: string;
+  }> {
+    try {
+      const params = new URLSearchParams({
+        schema,
+        table,
+        limit: limit.toString(),
+        offset: offset.toString(),
+      });
+
+      const response = await fetch(`${this.baseUrl}/partitions?${params}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data: PartitionsResponse = await response.json();
+      return { data };
+    } catch (error) {
+      return {
+        error:
+          error instanceof Error ? error.message : "Failed to fetch partitions",
+      };
     }
-    return this.fetchWithError<PartitionsResponse>(endpoint);
   }
 }
 

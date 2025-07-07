@@ -208,17 +208,6 @@ func (p *Partition) toManagedTable() managedTable {
 	}
 }
 
-// type unManagedPartition struct {
-// 	TenantFrom    string `db:"tenant_from"`
-// 	TenantTo      string `db:"tenant_to"`
-// 	TimestampFrom string `db:"timestamp_from"`
-// 	TimestampTo   string `db:"timestamp_to"`
-// 	PartitionName string `db:"partition_name"`
-// 	PartitionExpr string `db:"partition_expression"`
-// 	ParentSchema  string `db:"parent_schema"`
-// 	Table         string `db:"parent_table"`
-// }
-
 type Table struct {
 	Id string
 

@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"gopkg.in/guregu/null.v4"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/guregu/null.v4"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/oklog/ulid/v2"
@@ -78,7 +79,7 @@ func (m *Manager) GetConfig() Config {
 // runMigrations runs all the migrations on the management partitions while keeping them backwards compatible
 func (m *Manager) runMigrations(ctx context.Context) error {
 	migrations := []string{
-		createSchema,
+		createPartmanSchema,
 		createParentsTable,
 		createTenantsTable,
 		createPartitionsTable,
@@ -607,13 +608,6 @@ func (m *Manager) importExistingPartitions(ctx context.Context, tc Table) error 
 	return nil
 }
 
-func nullOrZero(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
 func (m *Manager) GetManagedTables(ctx context.Context) ([]uiManagedTableInfo, error) {
 	var tables []uiManagedTableInfo
 	err := m.db.SelectContext(ctx, &tables, getManagedTablesListQuery)
@@ -839,7 +833,7 @@ func (m *Manager) GetParentTables(ctx context.Context) ([]Table, error) {
 }
 
 // GetTenants returns all tenants for a specific parent table
-func (m *Manager) GetTenants(ctx context.Context, parentTableName, parentTableSchema string) ([]Tenant, error) {
+func (m *Manager) GetTenants(ctx context.Context, parentTableSchema, parentTableName string) ([]Tenant, error) {
 	var tenants []struct {
 		ParentTableId string `db:"parent_table_id"`
 		TenantId      string `db:"tenant_id"`
@@ -849,6 +843,8 @@ func (m *Manager) GetTenants(ctx context.Context, parentTableName, parentTableSc
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch tenants: %w", err)
 	}
+
+	m.logger.Info("fetched tenants", "table", parentTableName, "schema", parentTableSchema, "count", len(tenants))
 
 	result := make([]Tenant, 0, len(tenants))
 	for _, t := range tenants {

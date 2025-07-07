@@ -1,6 +1,6 @@
 package partman
 
-var createSchema = `CREATE SCHEMA IF NOT EXISTS partman;`
+var createPartmanSchema = `CREATE SCHEMA IF NOT EXISTS partman;`
 
 var createParentsTable = `
 CREATE TABLE IF NOT EXISTS partman.parent_tables (
@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS partman.tenants (
     created_at timestamptz DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (parent_table_id, id),
     FOREIGN KEY (parent_table_id) 
-        REFERENCES partman.parent_tables(id) ON DELETE CASCADE
+        REFERENCES partman.parent_tables(id) ON DELETE CASCADE,
+    UNIQUE(parent_table_id, id)
 );`
 
 var createPartitionsTable = `

@@ -13,6 +13,9 @@ import (
 type tableName string
 
 func buildTableName(schema string, table string, tenantId string) tableName {
+	if schema == "" {
+		schema = "public"
+	}
 	if tenantId != "" && len(tenantId) > 0 {
 		return tableName(fmt.Sprintf("%s.%s_%s", schema, table, tenantId))
 	}

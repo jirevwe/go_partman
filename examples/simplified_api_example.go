@@ -93,7 +93,7 @@ func ExampleSimplifiedAPI() {
 	}
 
 	// Register all tenants
-	results, err := manager.RegisterTenants(context.Background(), tenants)
+	results, err := manager.RegisterTenants(context.Background(), tenants...)
 	if err != nil {
 		logger.Fatal("failed to register tenants:", err)
 	}
@@ -182,7 +182,7 @@ func listParentTablesAndTenants(manager *partman.Manager) error {
 			pt.Schema, pt.Name, pt.TenantIdColumn, pt.PartitionBy)
 
 		// Get tenants for this parent table
-		tenants, err := manager.GetTenants(ctx, pt.Name, pt.Schema)
+		tenants, err := manager.GetTenants(ctx, pt.Schema, pt.Name)
 		if err != nil {
 			log.Printf("    Error getting tenants: %v", err)
 			continue

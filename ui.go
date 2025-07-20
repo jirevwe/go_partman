@@ -11,7 +11,6 @@ import (
 	"strings"
 )
 
-//go:embed web/dist
 var uiFS embed.FS
 
 type apiHandler struct {

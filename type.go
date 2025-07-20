@@ -141,6 +141,8 @@ const (
 )
 
 type Partitioner interface {
+	Start(ctx context.Context) error
+
 	// CreateFuturePartitions Create new partitions ahead of time
 	CreateFuturePartitions(ctx context.Context, tableConfig Table) error
 
@@ -150,20 +152,14 @@ type Partitioner interface {
 	// Maintain defines a regularly run maintenance routine
 	Maintain(ctx context.Context) error
 
-	// AddManagedTable adds a new managed table to the partition manager
-	AddManagedTable(tc Table) error
-
-	// importExistingPartitions scans the database for existing partitions and adds them to the partition management table
-	importExistingPartitions(ctx context.Context, tc Table) error
-
 	// CreateParentTable registers a parent table for partitioning (new API)
-	CreateParentTable(ctx context.Context, parentTable Table) error
+	CreateParentTable(ctx context.Context, parentTable Table) (string, error)
 
 	// RegisterTenant registers a tenant for an existing parent table (new API)
 	RegisterTenant(ctx context.Context, tenant Tenant) (*TenantRegistrationResult, error)
 
 	// RegisterTenants registers multiple tenants for an existing parent table (new API)
-	RegisterTenants(ctx context.Context, tenants []Tenant) ([]TenantRegistrationResult, error)
+	RegisterTenants(ctx context.Context, tenants ...Tenant) ([]TenantRegistrationResult, error)
 
 	// GetParentTables returns all registered parent tables
 	GetParentTables(ctx context.Context) ([]Table, error)

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/guregu/null.v4"
+	"github.com/guregu/null/v6"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/oklog/ulid/v2"

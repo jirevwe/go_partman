@@ -2254,7 +2254,7 @@ func TestTableDeduplication(t *testing.T) {
 			PartitionCount:    5,
 			RetentionPeriod:   time.Hour * 24 * 31,
 		}
-		_, err := db.ExecContext(ctx, upsertParentTableSQL,
+		_, err := db.ExecContext(ctx, upsertParentTable,
 			ulid.Make().String(),
 			mTable.Name,
 			mTable.Schema,

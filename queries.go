@@ -71,7 +71,7 @@ CREATE OR REPLACE TRIGGER validate_tenant_id_trigger
     BEFORE INSERT OR UPDATE ON partman.partitions
     FOR EACH ROW EXECUTE FUNCTION partman.validate_tenant_id()`
 
-var upsertSQL = `
+var upsertPartition = `
 INSERT INTO partman.partitions (
 	id, name, parent_table_id, tenant_id, partition_by, partition_type,
 	partition_bounds_from, partition_bounds_to
@@ -86,7 +86,7 @@ ORDER BY tablename DESC
 LIMIT 1;`
 
 // todo(raymond): paginate this query?
-var getManagedTablesRetentionPeriods = `
+var getManagedPartitions = `
 SELECT pt.table_name, pt.schema_name, p.tenant_id, pt.retention_period 
 FROM partman.partitions p
 join partman.parent_tables pt on pt.id = p.parent_table_id;`
@@ -98,7 +98,7 @@ SELECT EXISTS (
 	WHERE schemaname = $1 AND tablename = $2
 );`
 
-var partitionsQuery = `
+var getUnmanagedPartitions = `
 SELECT tablename 
 FROM pg_tables
 WHERE schemaname = $1 AND tablename ILIKE $2;`
@@ -127,7 +127,7 @@ SELECT
 FROM partman.partitions p 
 join partman.parent_tables pt on p.parent_table_id = pt.id;`
 
-var getPartitionDetailsQuery = `
+var getPartitionDetails = `
 WITH partition_info AS (
     SELECT
         t.tablename as name,
@@ -150,7 +150,7 @@ SELECT
     (SELECT COUNT(*) FROM pg_tables WHERE schemaname = $1 AND tablename LIKE $2 || '_%') as total_count
 FROM partition_info;`
 
-var getParentTableInfoQuery = `
+var getParentTableInfo = `
 WITH parent_table_info AS (
     SELECT
         schemaname,
@@ -183,12 +183,12 @@ SELECT
 FROM parent_table_info pti
 CROSS JOIN totals t;`
 
-var getManagedTablesListQuery = `
+var listParentTables = `
 SELECT DISTINCT table_name, schema_name 
 FROM partman.parent_tables
 ORDER BY table_name;`
 
-var upsertParentTableSQL = `
+var upsertParentTable = `
 INSERT INTO partman.parent_tables (
     id, table_name, schema_name, 
 	tenant_column, partition_by, 
@@ -199,12 +199,12 @@ ON CONFLICT (schema_name, table_name)
 DO UPDATE SET updated_at = current_timestamp
 RETURNING id;`
 
-var insertTenantSQL = `
+var upsertTenant = `
 INSERT INTO partman.tenants (id, parent_table_id) 
 VALUES ($1, $2)
 ON CONFLICT DO NOTHING;`
 
-var getParentTablesQuery = `
+var getParentTables = `
 SELECT 
     id,
     table_name,
@@ -218,14 +218,14 @@ SELECT
 FROM partman.parent_tables
 ORDER BY table_name;`
 
-var getTenantsQuery = `
+var getTenants = `
 SELECT t.id as tenant_id, pt.id as parent_table_id
 FROM partman.tenants t
 JOIN partman.parent_tables pt ON pt.id = t.parent_table_id 
 WHERE pt.table_name = $1 AND pt.schema_name = $2
 ORDER BY t.id;`
 
-var getParentTableQuery = `
+var getParentTable = `
 SELECT 
     id,
     table_name,
@@ -239,7 +239,7 @@ SELECT
 FROM partman.parent_tables
 WHERE table_name = $1 AND schema_name = $2;`
 
-var findUnmanagedPartitionsQuery = `
+var findUnmanagedPartitions = `
 WITH bounds AS (
 SELECT
 	nmsp_parent.nspname AS parent_schema,

@@ -141,7 +141,7 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, parentTable Table)
 		ParentTableId string `db:"parent_table_id"`
 		TenantId      string `db:"tenant_id"`
 	}
-	err := m.db.SelectContext(ctx, &tenants, getTenantsQuery, parentTable.Name, parentTable.Schema)
+	err := m.db.SelectContext(ctx, &tenants, getTenants, parentTable.Name, parentTable.Schema)
 	if err != nil {
 		return fmt.Errorf("failed to fetch tenants: %w", err)
 	}
@@ -210,16 +210,16 @@ func (m *Manager) partitionExists(ctx context.Context, partitionName, partitionS
 }
 
 func (m *Manager) DropOldPartitions(ctx context.Context) error {
-	// Get all managed tables and their retention periods
-	type managedTable struct {
+	// Get all managed partitions and their retention periods
+	type managedPartition struct {
 		TableName       string       `db:"table_name"`
 		SchemaName      string       `db:"schema_name"`
 		TenantId        string       `db:"tenant_id"`
 		RetentionPeriod TimeDuration `db:"retention_period"`
 	}
 
-	var tables []managedTable
-	if err := m.db.SelectContext(ctx, &tables, getManagedTablesRetentionPeriods); err != nil {
+	var tables []managedPartition
+	if err := m.db.SelectContext(ctx, &tables, getManagedPartitions); err != nil {
 		return fmt.Errorf("failed to fetch managed tables: %w", err)
 	}
 
@@ -235,7 +235,7 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 		}
 
 		var partitions []string
-		if err := m.db.SelectContext(ctx, &partitions, partitionsQuery, table.SchemaName, pattern); err != nil {
+		if err := m.db.SelectContext(ctx, &partitions, getUnmanagedPartitions, table.SchemaName, pattern); err != nil {
 			return fmt.Errorf("failed to fetch partitions for table %s: %w", table.TableName, err)
 		}
 
@@ -341,7 +341,7 @@ func (m *Manager) createPartition(ctx context.Context, parentTable Table, tenant
 		PartitionBoundsTo:   bounds.To,
 	}
 
-	_, err = tx.ExecContext(ctx, upsertSQL,
+	_, err = tx.ExecContext(ctx, upsertPartition,
 		ulid.Make().String(),
 		mTable.TableName,
 		parentTable.Id,
@@ -532,7 +532,7 @@ func (m *Manager) importExistingPartitions(ctx context.Context, parentTable Tabl
 	}
 
 	var unManagedPartitions []unManagedPartition
-	if err := m.db.SelectContext(ctx, &unManagedPartitions, findUnmanagedPartitionsQuery, parentTable.Schema, parentTable.Name); err != nil {
+	if err := m.db.SelectContext(ctx, &unManagedPartitions, findUnmanagedPartitions, parentTable.Schema, parentTable.Name); err != nil {
 		return fmt.Errorf("failed to query unmanaged partitions: %w", err)
 	}
 
@@ -549,7 +549,7 @@ func (m *Manager) importExistingPartitions(ctx context.Context, parentTable Tabl
 			m.logger.Info("creating tenant from imported partition", "table_id", parentTable.Id)
 
 			// Register the tenant
-			_, err := m.db.ExecContext(ctx, insertTenantSQL, tenant.TenantId, parentTable.Id)
+			_, err := m.db.ExecContext(ctx, upsertTenant, tenant.TenantId, parentTable.Id)
 			if err != nil {
 				m.logger.Error("failed to register tenant from imported partition",
 					"partition", p.PartitionName,
@@ -612,8 +612,8 @@ func (m *Manager) importExistingPartitions(ctx context.Context, parentTable Tabl
 
 		mTable := partition.toManagedTable()
 
-		// Insert into partition management table
-		res, err := m.db.ExecContext(ctx, upsertSQL,
+		// Insert into partitions table
+		res, err := m.db.ExecContext(ctx, upsertPartition,
 			ulid.Make().String(),
 			mTable.TableName,
 			parentTable.Id,
@@ -664,7 +664,7 @@ func (m *Manager) importExistingPartitions(ctx context.Context, parentTable Tabl
 
 func (m *Manager) GetManagedTables(ctx context.Context) ([]uiManagedTableInfo, error) {
 	var tables []uiManagedTableInfo
-	err := m.db.SelectContext(ctx, &tables, getManagedTablesListQuery)
+	err := m.db.SelectContext(ctx, &tables, listParentTables)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get managed tables: %w", err)
 	}
@@ -674,7 +674,7 @@ func (m *Manager) GetManagedTables(ctx context.Context) ([]uiManagedTableInfo, e
 func (m *Manager) GetPartitions(ctx context.Context, schema, tableName string, limit, offset int) ([]uiPartitionInfo, error) {
 	pattern := fmt.Sprintf("%s_%%", tableName)
 	var partitions []uiPartitionInfo
-	err := m.db.SelectContext(ctx, &partitions, getPartitionDetailsQuery, schema, pattern, limit, offset)
+	err := m.db.SelectContext(ctx, &partitions, getPartitionDetails, schema, pattern, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get partitions: %w", err)
 	}
@@ -683,7 +683,7 @@ func (m *Manager) GetPartitions(ctx context.Context, schema, tableName string, l
 
 func (m *Manager) GetParentTableInfo(ctx context.Context, schema, tableName string) (*uiParentTableInfo, error) {
 	var info uiParentTableInfo
-	err := m.db.GetContext(ctx, &info, getParentTableInfoQuery, schema, tableName)
+	err := m.db.GetContext(ctx, &info, getParentTableInfo, schema, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -705,7 +705,7 @@ func (m *Manager) CreateParentTable(ctx context.Context, table Table) (string, e
 		Id string `db:"id"`
 	}{}
 	// Insert or update parent table configuration
-	err := m.db.QueryRowxContext(ctx, upsertParentTableSQL,
+	err := m.db.QueryRowxContext(ctx, upsertParentTable,
 		ulid.Make().String(),
 		table.Name,
 		table.Schema,
@@ -753,7 +753,7 @@ func (m *Manager) RegisterTenant(ctx context.Context, tenant Tenant) (*TenantReg
 		RetentionPeriod   string `db:"retention_period"`
 	}
 
-	err := m.db.GetContext(ctx, &parentTableData, getParentTableQuery, tenant.TableName, tenant.TableSchema)
+	err := m.db.GetContext(ctx, &parentTableData, getParentTable, tenant.TableName, tenant.TableSchema)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("parent table not found: %w", err))
 		return result, nil
@@ -785,7 +785,7 @@ func (m *Manager) RegisterTenant(ctx context.Context, tenant Tenant) (*TenantReg
 	}
 
 	// Insert tenant
-	_, err = m.db.ExecContext(ctx, insertTenantSQL,
+	_, err = m.db.ExecContext(ctx, upsertTenant,
 		tenant.TenantId,
 		parentTable.Id,
 	)
@@ -853,7 +853,7 @@ func (m *Manager) GetParentTables(ctx context.Context) ([]Table, error) {
 		RetentionPeriod   string `db:"retention_period"`
 	}
 
-	err := m.db.SelectContext(ctx, &parentTables, getParentTablesQuery)
+	err := m.db.SelectContext(ctx, &parentTables, getParentTables)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get parent tables: %w", err)
 	}
@@ -895,7 +895,7 @@ func (m *Manager) GetTenants(ctx context.Context, parentTableSchema, parentTable
 		TenantId      string `db:"tenant_id"`
 	}
 
-	err := m.db.SelectContext(ctx, &tenants, getTenantsQuery, parentTableName, parentTableSchema)
+	err := m.db.SelectContext(ctx, &tenants, getTenants, parentTableName, parentTableSchema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch tenants: %w", err)
 	}

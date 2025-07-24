@@ -132,7 +132,7 @@ func (m *Manager) initialize(ctx context.Context, config *Config) error {
 }
 
 // CreateFuturePartitions creates partitions for all parent tables and pegs all timestamps to UTC
-func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
+func (m *Manager) CreateFuturePartitions(ctx context.Context, parentTable Table) error {
 	// Determine start time for new partitions
 	today := m.clock.Now().UTC()
 
@@ -141,33 +141,33 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 		ParentTableId string `db:"parent_table_id"`
 		TenantId      string `db:"tenant_id"`
 	}
-	err := m.db.SelectContext(ctx, &tenants, getTenantsQuery, tc.Name, tc.Schema)
+	err := m.db.SelectContext(ctx, &tenants, getTenantsQuery, parentTable.Name, parentTable.Schema)
 	if err != nil {
 		return fmt.Errorf("failed to fetch tenants: %w", err)
 	}
 
 	for _, te := range tenants {
 		// for each tenant, create the future partitions
-		for i := uint(0); i < tc.PartitionCount; i++ {
+		for i := uint(0); i < parentTable.PartitionCount; i++ {
 			bounds := Bounds{
-				From: today.Add(time.Duration(i) * tc.PartitionInterval).UTC(),
-				To:   today.Add(time.Duration(i+1) * tc.PartitionInterval).UTC(),
+				From: today.Add(time.Duration(i) * parentTable.PartitionInterval).UTC(),
+				To:   today.Add(time.Duration(i+1) * parentTable.PartitionInterval).UTC(),
 			}
 
 			// Check if partition already exists
 			partitionName := m.generatePartitionName(Tenant{
-				TableName:   tc.Name,
-				TableSchema: tc.Schema,
+				TableName:   parentTable.Name,
+				TableSchema: parentTable.Schema,
 				TenantId:    te.TenantId,
 			}, bounds)
-			exists, innerErr := m.partitionExists(ctx, partitionName, tc.Schema)
+			exists, innerErr := m.partitionExists(ctx, partitionName, parentTable.Schema)
 			if innerErr != nil {
 				return fmt.Errorf("failed to check if partition exists: %w", innerErr)
 			}
 
 			if exists {
 				m.logger.Info("partition already exists",
-					"table", tc.Name,
+					"table", parentTable.Name,
 					"tenant", "",
 					"partition", partitionName,
 					"from", bounds.From,
@@ -176,18 +176,18 @@ func (m *Manager) CreateFuturePartitions(ctx context.Context, tc Table) error {
 			}
 
 			tempTenant := Tenant{
-				TableName:   tc.Name,
-				TableSchema: tc.Schema,
+				TableName:   parentTable.Name,
+				TableSchema: parentTable.Schema,
 				TenantId:    te.TenantId,
 			}
 			// Create the partition
-			innerErr = m.createPartition(ctx, tc, tempTenant, bounds)
+			innerErr = m.createPartition(ctx, parentTable, tempTenant, bounds)
 			if innerErr != nil {
 				return fmt.Errorf("failed to create future partition: %w", innerErr)
 			}
 
 			m.logger.Info("created future partition",
-				"table", tc.Name,
+				"table", parentTable.Name,
 				"tenant", "",
 				"partition", partitionName,
 				"from", bounds.From,
@@ -280,6 +280,15 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 					continue
 				}
 
+				// Delete partition record from management table
+				deletePartitionQuery := `delete from partman.partitions where parent_table_id = $1 and id = $2`
+				if _, err = m.db.ExecContext(ctx, deletePartitionQuery, partition); err != nil {
+					m.logger.Error("failed to delete partition record",
+						"partition", partition,
+						"error", err)
+					continue
+				}
+
 				m.logger.Info("dropped old partition",
 					"table", table.TableName,
 					"partition", partition,
@@ -292,22 +301,66 @@ func (m *Manager) DropOldPartitions(ctx context.Context) error {
 }
 
 // createPartition creates a partition for a table
-func (m *Manager) createPartition(ctx context.Context, tc Table, te Tenant, bounds Bounds) error {
+func (m *Manager) createPartition(ctx context.Context, parentTable Table, tenant Tenant, bounds Bounds) error {
 	// Generate a partition name based on bounds
-	partitionName := m.generatePartitionName(te, bounds)
+	partitionName := m.generatePartitionName(tenant, bounds)
 
 	// Create SQL for partition
-	pQuery, err := m.generatePartitionSQL(partitionName, tc, te, bounds)
+	pQuery, err := m.generatePartitionSQL(partitionName, parentTable, tenant, bounds)
 	if err != nil {
 		return err
 	}
 
 	m.logger.Info(pQuery)
 
-	// Execute partition creation
-	_, err = m.db.ExecContext(ctx, pQuery)
+	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
+	}
+	defer tx.Rollback()
+
+	// Execute partition creation
+	_, err = tx.ExecContext(ctx, pQuery)
+	if err != nil {
+		m.logger.Error("failed to create partition",
+			"partition", partitionName,
+			"table", parentTable.Name,
+			"tenant", tenant.TenantId,
+			"error", err)
+		return err
+	}
+
+	mTable := managedTable{
+		TableName:           partitionName,
+		SchemaName:          parentTable.Schema,
+		TenantID:            tenant.TenantId,
+		TenantColumn:        parentTable.TenantIdColumn,
+		PartitionBy:         parentTable.PartitionBy,
+		PartitionType:       string(parentTable.PartitionType),
+		PartitionBoundsFrom: bounds.From,
+		PartitionBoundsTo:   bounds.To,
+	}
+
+	_, err = tx.ExecContext(ctx, upsertSQL,
+		ulid.Make().String(),
+		mTable.TableName,
+		parentTable.Id,
+		mTable.TenantID,
+		mTable.PartitionBy,
+		mTable.PartitionType,
+		mTable.PartitionBoundsFrom,
+		mTable.PartitionBoundsTo)
+	if err != nil {
+		m.logger.Error("failed to insert management entry",
+			"partition", mTable.TableName,
+			"table", parentTable.Name,
+			"tenant", tenant.TenantId,
+			"error", err)
+		return err
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		return commitErr
 	}
 
 	return nil
@@ -463,7 +516,7 @@ func generateTableKey(tableName, tenantID string) string {
 }
 
 // importExistingPartitions scans the database for existing partitions and adds them to the partition management table
-func (m *Manager) importExistingPartitions(ctx context.Context, tc Table) error {
+func (m *Manager) importExistingPartitions(ctx context.Context, parentTable Table) error {
 	errString := make([]string, 0)
 
 	// Query to get all tables that look like partitions but aren't yet managed
@@ -479,7 +532,7 @@ func (m *Manager) importExistingPartitions(ctx context.Context, tc Table) error 
 	}
 
 	var unManagedPartitions []unManagedPartition
-	if err := m.db.SelectContext(ctx, &unManagedPartitions, findUnmanagedPartitionsQuery, tc.Schema, tc.Name); err != nil {
+	if err := m.db.SelectContext(ctx, &unManagedPartitions, findUnmanagedPartitionsQuery, parentTable.Schema, parentTable.Name); err != nil {
 		return fmt.Errorf("failed to query unmanaged partitions: %w", err)
 	}
 
@@ -488,15 +541,15 @@ func (m *Manager) importExistingPartitions(ctx context.Context, tc Table) error 
 		// Create tenant from imported partition if tenant ID exists
 		if len(p.TenantFrom.String) > 0 {
 			tenant := Tenant{
-				TableName:   tc.Name,
-				TableSchema: tc.Schema,
+				TableName:   parentTable.Name,
+				TableSchema: parentTable.Schema,
 				TenantId:    p.TenantFrom.String,
 			}
 
-			m.logger.Info("creating tenant from imported partition", "table_id", tc.Id)
+			m.logger.Info("creating tenant from imported partition", "table_id", parentTable.Id)
 
 			// Register the tenant
-			_, err := m.db.ExecContext(ctx, insertTenantSQL, tenant.TenantId, tc.Id)
+			_, err := m.db.ExecContext(ctx, insertTenantSQL, tenant.TenantId, parentTable.Id)
 			if err != nil {
 				m.logger.Error("failed to register tenant from imported partition",
 					"partition", p.PartitionName,
@@ -548,10 +601,10 @@ func (m *Manager) importExistingPartitions(ctx context.Context, tc Table) error 
 			Name:        p.PartitionName,
 			Bounds:      Bounds{From: from, To: to},
 			TenantId:    p.TenantFrom.String,
-			ParentTable: tc,
+			ParentTable: parentTable,
 		}
 
-		err = m.checkTableColumnsExist(ctx, tc, p.TenantFrom.String)
+		err = m.checkTableColumnsExist(ctx, parentTable, p.TenantFrom.String)
 		if err != nil {
 			errString = append(errString, err.Error())
 			continue
@@ -562,7 +615,8 @@ func (m *Manager) importExistingPartitions(ctx context.Context, tc Table) error 
 		// Insert into partition management table
 		res, err := m.db.ExecContext(ctx, upsertSQL,
 			ulid.Make().String(),
-			tc.Id,
+			mTable.TableName,
+			parentTable.Id,
 			mTable.TenantID,
 			mTable.PartitionBy,
 			mTable.PartitionType,
@@ -788,6 +842,7 @@ func (m *Manager) RegisterTenants(ctx context.Context, tenants ...Tenant) ([]Ten
 // GetParentTables returns all registered parent tables
 func (m *Manager) GetParentTables(ctx context.Context) ([]Table, error) {
 	var parentTables []struct {
+		ID                string `db:"id"`
 		TableName         string `db:"table_name"`
 		SchemaName        string `db:"schema_name"`
 		TenantColumn      string `db:"tenant_column"`
@@ -818,6 +873,7 @@ func (m *Manager) GetParentTables(ctx context.Context) ([]Table, error) {
 		}
 
 		result = append(result, Table{
+			Id:                pt.ID,
 			Name:              pt.TableName,
 			Schema:            pt.SchemaName,
 			TenantIdColumn:    pt.TenantColumn,

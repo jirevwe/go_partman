@@ -2984,3 +2984,157 @@ func TestStartStop(t *testing.T) {
 	dropParentTables(t, ctx, db)
 	cleanupPartManDBs(t, db)
 }
+
+func TestCreatePartition(t *testing.T) {
+	ctx := context.Background()
+	db := setupTestDB(t, ctx)
+	createParentTable(t, ctx, db)
+
+	// Define a valid parent table for testing
+	parentTable := Table{
+		Name:              "user_logs",
+		Schema:            "test",
+		TenantIdColumn:    "project_id",
+		PartitionBy:       "created_at",
+		PartitionType:     TypeRange,
+		PartitionInterval: time.Hour * 24,
+		RetentionPeriod:   time.Hour * 24 * 7,
+		PartitionCount:    5,
+	}
+
+	// Valid tenant and bounds
+	tenant := Tenant{
+		TableName:   "user_logs",
+		TableSchema: "test",
+		TenantId:    "tenant1",
+	}
+	validBounds := Bounds{
+		From: time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2024, 3, 2, 0, 0, 0, 0, time.UTC),
+	}
+
+	tests := []struct {
+		name           string
+		table          func(t *testing.T, pt Table) Table
+		tenant         Tenant
+		bounds         Bounds
+		expectErr      bool
+		errContains    string
+		setupDB        func(t *testing.T, m *Manager)
+		validationFunc func(t *testing.T, m *Manager)
+	}{
+		{
+			name:      "Successful partition creation",
+			table:     func(t *testing.T, pt Table) Table { return pt },
+			tenant:    tenant,
+			bounds:    validBounds,
+			expectErr: false,
+			setupDB: func(t *testing.T, m *Manager) {
+				// No special setup required
+			},
+			validationFunc: func(t *testing.T, m *Manager) {
+				partitionExists, err := m.partitionExists(ctx, "user_logs_tenant1_20240301", "test")
+				require.NoError(t, err)
+				require.True(t, partitionExists)
+			},
+		},
+		{
+			name: "Invalid partition type",
+			table: func(t *testing.T, pt Table) Table {
+				p := parentTable
+				p.PartitionType = "invalid"
+				return p
+			},
+			tenant:      tenant,
+			bounds:      validBounds,
+			expectErr:   true,
+			errContains: "unsupported partition type",
+		},
+		{
+			name: "Partition with overlapping bounds should upsert",
+			table: func(t *testing.T, pt Table) Table {
+				return pt
+			},
+			tenant:    tenant,
+			bounds:    validBounds,
+			expectErr: false,
+			setupDB: func(t *testing.T, m *Manager) {
+				parentTables, innerErr := m.GetParentTables(ctx)
+				require.NoError(t, innerErr)
+				require.Len(t, parentTables, 1)
+
+				// Create a partition with matching bounds beforehand
+				innerErr = m.createPartition(ctx, parentTables[0], tenant, validBounds)
+				require.NoError(t, innerErr)
+			},
+		},
+		{
+			name: "Database transaction failure",
+			table: func(t *testing.T, pt Table) Table {
+				return pt
+			},
+			tenant:    tenant,
+			bounds:    validBounds,
+			expectErr: true,
+			setupDB: func(t *testing.T, m *Manager) {
+				// Simulate a database failure by dropping the parent table
+				_, err := db.ExecContext(ctx, "DROP TABLE test.user_logs CASCADE;")
+				require.NoError(t, err)
+			},
+			errContains: "relation \"test.user_logs\" does not exist",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configTable := tt.table(t, parentTable)
+
+			logger := NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+			config := &Config{
+				SampleRate: time.Second,
+				Tables: []Table{
+					configTable,
+				},
+			}
+			clock := NewSimulatedClock(time.Now())
+
+			m, err := NewManager(WithDB(db), WithConfig(config), WithLogger(logger), WithClock(clock))
+			require.NoError(t, err)
+
+			err = m.Start(ctx)
+			require.NoError(t, err)
+
+			result, err := m.RegisterTenant(ctx, tenant)
+			require.NoError(t, err)
+			require.Empty(t, result.Errors)
+
+			// Setup database if required
+			if tt.setupDB != nil {
+				tt.setupDB(t, m)
+			}
+
+			parentTables, err := m.GetParentTables(ctx)
+			require.NoError(t, err)
+			require.Len(t, parentTables, 1)
+
+			configTable.Id = parentTables[0].Id
+			t.Log(configTable)
+
+			// Call createPartition
+			err = m.createPartition(ctx, configTable, tt.tenant, tt.bounds)
+
+			if tt.expectErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.errContains)
+			} else {
+				require.NoError(t, err)
+				if tt.validationFunc != nil {
+					tt.validationFunc(t, m)
+				}
+			}
+		})
+	}
+
+	dropParentTables(t, ctx, db)
+	cleanupPartManDBs(t, db)
+}

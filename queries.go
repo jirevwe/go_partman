@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS partman.tenants (
 var createPartitionsTable = `
 CREATE TABLE IF NOT EXISTS partman.partitions (
     id VARCHAR PRIMARY KEY,
+    name VARCHAR NOT NULL unique,
     parent_table_id VARCHAR NOT NULL,
     tenant_id VARCHAR,
     partition_by VARCHAR NOT NULL,
@@ -72,9 +73,9 @@ CREATE OR REPLACE TRIGGER validate_tenant_id_trigger
 
 var upsertSQL = `
 INSERT INTO partman.partitions (
-	id, parent_table_id, tenant_id, partition_by, partition_type,
+	id, name, parent_table_id, tenant_id, partition_by, partition_type,
 	partition_bounds_from, partition_bounds_to
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT DO NOTHING;`
 
 var getlatestPartition = `
@@ -205,6 +206,7 @@ ON CONFLICT DO NOTHING;`
 
 var getParentTablesQuery = `
 SELECT 
+    id,
     table_name,
     schema_name,
     tenant_column,

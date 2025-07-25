@@ -14,13 +14,35 @@ A Go native implementation of PostgreSQL table partitioning management, inspired
 
 ## Features
 
-- Automatic partition creation and management
-- Support for time-based range partitioning
-- Configurable retention policies
-- Automatic cleanup of old partitions
-- Pre-creation of future partitions
-- Multi-tenant support with tenant-specific partitioning
-- Extensible pre-drop hooks for custom cleanup logic
+- **Automatic Partition Management**
+  - Time-based range partitioning with configurable intervals
+  - Automatic creation of future partitions
+  - Scheduled cleanup of old partitions based on retention policies
+  - Pre-drop hooks for custom cleanup logic (data archiving, backups, etc.)
+
+- **Multi-tenancy Support**
+  - Register and manage multiple tenants per table
+  - Dynamic tenant registration at runtime
+  - Tenant-specific partition management
+  - Easy tenant discovery and querying
+
+- **Flexible Configuration**
+  - Builder pattern with functional options
+  - Support for multiple database schemas
+  - Configurable maintenance intervals
+  - Custom logger integration
+
+- **Web UI and API**
+  - Built-in web interface for monitoring partitions
+  - REST API endpoints for programmatic access
+  - Size and usage statistics
+  - Easy integration with existing HTTP servers
+
+- **Developer-friendly**
+  - Clear and consistent API
+  - Detailed error reporting
+  - Comprehensive logging
+  - Support for testing with clock mocking
 
 ## Installation
 
@@ -30,119 +52,233 @@ go get github.com/jirevwe/go_partman
 
 ## Usage
 
-### Basic Setup
+### Basic Setup with the New API
 
 ```go
 package main
 
 import (
 	"context"
-	"fmt"
+	"log"
+	"log/slog"
+	"os"
+	"time"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jirevwe/go_partman"
 	"github.com/jmoiron/sqlx"
-
-	"log"
-	"log/slog"
-	"os"
-
-	"time"
 )
 
 func main() {
-	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
+	// Configure logger
+	logger := partman.NewSlogLogger(slog.HandlerOptions{Level: slog.LevelDebug})
+
+	ctx := context.Background()
+
+	// Setup database connection
+	pgxCfg, err := pgxpool.ParseConfig("postgres://postgres:postgres@localhost:5432/party?sslmode=disable")
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 
-	pool, err := pgxpool.NewWithConfig(context.Background(), pgxCfg)
+	pool, err := pgxpool.NewWithConfig(ctx, pgxCfg)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	db := sqlx.NewDb(sqlDB, "pgx")
 
-	config := &partman.Config{
-		SampleRate: 30 * time.Second,
-		SchemaName: "convoy",
-	}
-
-	clock := partman.NewRealClock()
-	manager, err := partman.NewAndStart(db, config, slog.New(slog.NewTextHandler(os.Stdout, nil)), clock)
+	// Initialize manager with functional options pattern
+	manager, err := partman.NewManager(
+		partman.WithDB(db),
+		partman.WithLogger(logger),
+		partman.WithConfig(&partman.Config{
+			SampleRate: time.Second,
+			Tables: []partman.Table{
+				{
+					Name:              "user_logs",
+					Schema:            "convoy",
+					TenantIdColumn:    "project_id",
+					PartitionBy:       "created_at",
+					PartitionType:     partman.TypeRange,
+					PartitionInterval: time.Hour * 24,
+					PartitionCount:    10,
+					RetentionPeriod:   time.Hour * 24 * 30,
+				},
+			},
+		}),
+		partman.WithClock(partman.NewRealClock()),
+	)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 
-	if err = manager.Start(context.Background()); err != nil {
-		log.Fatal(err)
+	// Start the partition manager
+	if err = manager.Start(ctx); err != nil {
+		logger.Fatal(err)
 	}
-
-	time.Sleep(30 * time.Second)
 }
-
 ```
 
 ### Multi-tenant Setup
 
+With the new API, multi-tenancy is handled through tenant registration. First, define your parent tables in the configuration:
+
 ```go
-config := partman.Config{
-    SchemaName: "public",
-    Tables: []partman.TableConfig{
+config := &partman.Config{
+    SampleRate: time.Second,
+    Tables: []partman.Table{
         {
-            Name:              "events",
-            TenantId:          "tenant1",           // Specify tenant ID
-            TenantIdColumn:    "project_id",        // Column name for tenant ID
-            PartitionType:     partman.TypeRange,
+            Name:              "user_logs",
+            Schema:            "convoy",
+            TenantIdColumn:    "project_id",
             PartitionBy:       "created_at",
+            PartitionType:     partman.TypeRange,
             PartitionInterval: time.Hour * 24,
-            PartitionCount:    10, 
+            PartitionCount:    10,
+            RetentionPeriod:   time.Hour * 24 * 30,
+        },
+        {
+            Name:              "delivery_attempts",
+            Schema:            "convoy",
+            TenantIdColumn:    "project_id",
+            PartitionBy:       "created_at",
+            PartitionType:     partman.TypeRange,
+            PartitionInterval: time.Hour * 24,
+            PartitionCount:    10,
             RetentionPeriod:   time.Hour * 24 * 7,
         },
     },
 }
 ```
 
-### Adding a Managed Table
+### Registering Tenants
 
-You can add a new managed table to the partition manager using the `AddManagedTable` method:
+You can register multiple tenants at once:
 
 ```go
-newTableConfig := partman.TableConfig{
-    Name:              "new_events",
-    TenantId:          "tenant1",           // Specify tenant ID
-    TenantIdColumn:    "project_id",        // Column name for tenant ID
-    PartitionType:     partman.TypeRange,
-    PartitionBy:       "created_at",
-    PartitionInterval: time.Hour * 24,
-    PartitionCount:    10,
-    RetentionPeriod:   time.Hour * 24 * 7,
+// Define tenants to register
+tenants := []partman.Tenant{
+    {
+        TableName:   "delivery_attempts",
+        TableSchema: "convoy",
+        TenantId:    "tenant1",
+    },
+    {
+        TableName:   "delivery_attempts",
+        TableSchema: "convoy",
+        TenantId:    "tenant2",
+    },
+    {
+        TableName:   "user_logs",
+        TableSchema: "convoy",
+        TenantId:    "tenant1",
+    },
+    {
+        TableName:   "user_logs",
+        TableSchema: "convoy",
+        TenantId:    "tenant2",
+    },
 }
 
-// Add the new managed table
-if err := manager.AddManagedTable(newTableConfig); err != nil {
-    log.Fatal(err)
+// Register all tenants
+results, err := manager.RegisterTenants(ctx, tenants...)
+if err != nil {
+    logger.Fatal("failed to register tenants:", err)
+}
+
+// Process registration results
+for _, result := range results {
+    if len(result.Errors) > 0 {
+        logger.Error("tenant registration had errors",
+            "tenant", result.TenantId,
+            "table", result.TableName,
+            "errors", result.Errors)
+    } else {
+        logger.Info("tenant registered successfully",
+            "tenant", result.TenantId,
+            "table", result.TableName,
+            "partitions_created", result.PartitionsCreated,
+            "partitions_imported", result.ExistingPartitionsImported)
+    }
 }
 ```
 
-### Import Exsiting Partitions
+### Registering Tenants at Runtime
 
-You can add a new managed table to the partition manager using the `AddManagedTable` method:
+You can register additional tenants after the partition manager is running:
 
 ```go
-err = manager.ImportExistingPartitions(context.Background(), partman.Table{
-    TenantIdColumn:    "project_id",
-    PartitionBy:       "created_at",
-    PartitionType:     partman.TypeRange,
-    PartitionInterval: time.Hour * 24,
-    PartitionCount:    10,
-    RetentionPeriod:   time.Hour * 24 * 7,
+// Register a single tenant at runtime
+result, err := manager.RegisterTenant(ctx, partman.Tenant{
+    TableName:   "user_logs",
+    TableSchema: "convoy",
+    TenantId:    "tenant3",
 })
+if err != nil {
+    log.Fatal("failed to register tenant:", err)
+}
+
+// Check registration results
+if len(result.Errors) > 0 {
+    log.Printf("Tenant registration had errors: %v", result.Errors)
+} else {
+    log.Printf("Tenant %s registered successfully with %d partitions created",
+        result.TenantId, result.PartitionsCreated)
+}
+```
+
+### Querying Partition Information
+
+You can get information about parent tables and tenants:
+
+```go
+// Get all parent tables
+parentTables, err := manager.GetParentTables(ctx)
 if err != nil {
     log.Fatal(err)
 }
+
+for _, pt := range parentTables {
+    log.Printf("Parent table: %s.%s (tenant_column: %s, partition_by: %s)",
+        pt.Schema, pt.Name, pt.TenantIdColumn, pt.PartitionBy)
+
+    // Get tenants for this parent table
+    tenants, err := manager.GetTenants(ctx, pt.Schema, pt.Name)
+    if err != nil {
+        log.Printf("Error getting tenants: %v", err)
+        continue
+    }
+
+    log.Printf("%s has %d tenants:", pt.Name, len(tenants))
+    for _, tenant := range tenants {
+        log.Printf("  - %s", tenant.TenantId)
+    }
+}
 ```
+
+### Web UI Integration
+
+go_partman comes with a built-in web UI for monitoring partitions. You can easily integrate it into your existing HTTP server:
+
+```go
+// Option 1: Use the combined UI and API handler
+http.Handle("/partman/", http.StripPrefix("/partman", partman.UIHandler(manager)))
+
+// Option 2: Use separate handlers for API and UI
+http.Handle("/api/partman/", http.StripPrefix("/api/partman", partman.APIHandler(manager)))
+http.Handle("/ui/partman/", http.StripPrefix("/ui/partman", partman.StaticHandler()))
+
+// Start your HTTP server
+log.Fatal(http.ListenAndServe(":8080", nil))
+```
+
+The web UI provides:
+- Table listing with size and row count information
+- Partition details with creation date and size statistics
+- Easy navigation between parent tables and their partitions
 
 ### Table Requirements
 
@@ -191,6 +327,68 @@ Currently supports:
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## TODO
+
+The following features would be great additions to this library. If you're interested in contributing, consider implementing one of these:
+
+### Partition Types
+- Implement list partitioning support
+- Implement hash partitioning support
+- Add composite partitioning capabilities
+
+### Monitoring & Metrics
+- Add built-in metrics collection
+- Implement Prometheus/OpenTelemetry integration
+- Add partition size/growth monitoring
+- Create an alerting system for partition-related issues
+
+### Advanced Management
+- Implement partition merging capabilities
+- Add partition splitting functionality
+- Support online partition schema changes
+- Implement partition rebalancing features
+
+### Security
+- Add authentication to the web UI
+- Implement role-based access control
+- Add audit logging for partition operations
+- Enhance security configuration options
+
+### Backup & Recovery
+- Implement built-in backup functionality
+- Add point-in-time recovery features
+- Implement partition-level backup options
+- Create disaster recovery procedures
+
+### Testing Support
+- Provide mock implementations for testing
+- Add test utilities for partition management
+- Enhance integration test helpers
+
+### Performance
+- Implement a caching mechanism
+- Add batch operation support
+- Provide partition access statistics
+- Add performance optimization options
+
+### Documentation & Examples
+- Expand documentation for advanced use cases
+- Add more comprehensive examples
+- Create a detailed troubleshooting guide
+- Improve API documentation
+
+### High Availability
+- Add support for clustered environments
+- Implement failover handling
+- Enhance distributed operation support
+- Create a leader election mechanism
+
+### Data Migration
+- Add enhanced data migration tools
+- Implement zero-downtime migrations
+- Support schema evolution capabilities
+- Add cross-database migration support
 
 ## License
 
